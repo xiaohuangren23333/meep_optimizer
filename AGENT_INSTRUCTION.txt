@@ -1,0 +1,35 @@
+本项目使用 Meep + Python 优化一维光子晶体椭圆孔缺陷腔。
+
+当前环境：
+- WSL Ubuntu
+- conda 环境：phc-meep
+- 项目路径：~/projects/meep_optimizer
+- Meep 已安装，不要重新安装
+
+禁止：
+- 不要逐孔自由优化
+- 不要只追求最高 Q
+- 不要跳过归一化参考仿真
+- 不要把 2D 结果说成真实 3D 器件结果
+
+本项目可以参考 Meep 官方 Python 教程和示例。
+
+优先参考：
+1. Resonant Modes and Transmission in a Waveguide Cavity
+https://meep.readthedocs.io/en/latest/Python_Tutorials/Resonant_Modes_and_Transmission_in_a_Waveguide_Cavity/
+2. Python User Interface
+https://meep.readthedocs.io/en/latest/Python_User_Interface/
+3. Meep Python examples
+https://github.com/NanoComp/meep/tree/master/python/examples
+
+最好学习官网案例中的流程：
+- 建立波导
+- 加入周期孔阵列
+- 使用 GaussianSource 激发宽带信号
+- 使用 flux monitor 计算透射谱
+- 先跑无孔参考仿真
+- 再跑有孔结构仿真
+- 计算归一化透射率
+- 从周期结构中寻找带隙
+- 打破周期性形成缺陷模
+- 用透射谱和谐振模式分析 Q

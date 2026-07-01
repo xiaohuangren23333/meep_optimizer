@@ -1,0 +1,2 @@
+label,a,rx,ry,N,T_min,gap_nm,has_gap,T_max,time_s,filename
+a0.440_rx0.120_ry0.240_N20,0.44,0.12,0.24,20,0.8058515457472145,160.5140351702089,True,0.9116899187046058,2256.7,periodic_a0.440_rx0.120_ry0.240_N20.csv
