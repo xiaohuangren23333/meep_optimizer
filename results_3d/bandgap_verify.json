@@ -1,0 +1,13 @@
+{
+  "a": 0.44,
+  "rx": 0.12,
+  "ry": 0.22,
+  "N": 20,
+  "T_min": 0.078,
+  "gap_start_nm": 1532.4,
+  "gap_end_nm": 1565.3,
+  "gap_width_nm": 32.9,
+  "center_nm": 1548.9,
+  "method": "GaussianSource + build_geom(N=0) reference",
+  "verified_at": "2026-07-01"
+}
