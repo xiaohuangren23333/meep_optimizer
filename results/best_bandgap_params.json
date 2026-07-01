@@ -3,11 +3,11 @@
   "rx": 0.12,
   "ry": 0.22,
   "N_period": 20,
-  "gap_start_nm": 1470.0,
-  "gap_end_nm": 1631.0,
-  "gap_width_nm": 161.0,
-  "center_nm": 1550.5,
-  "T_min": 0.064,
-  "source": "optimize_3d_ridge.py coordinate descent (GaussianSource + ref N=0)",
-  "note": "3D ridge waveguide; 2D cavity optimizer uses same mirror geometry with 2D bandgap estimate"
+  "gap_start_nm": 1532.4,
+  "gap_end_nm": 1565.3,
+  "gap_width_nm": 32.9,
+  "center_nm": 1548.9,
+  "T_min": 0.078,
+  "source": "3D GaussianSource verify 2026-07-01 (optimize_3d_ridge build_geom)",
+  "note": "Verified T_min with ref N=0 normalization; gap centered at 1550 nm"
 }

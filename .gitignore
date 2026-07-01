@@ -24,6 +24,7 @@ results/cavity_3d/
 .idea/
 .vscode/
 *.swp
+bin/
 
 # Keep structure placeholders
 !results/.gitkeep

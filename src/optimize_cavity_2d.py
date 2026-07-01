@@ -271,11 +271,18 @@ def score_peak(peak):
     if not peak["valid"]:
         return -100
     s = 0
-    if peak["Q"] > 1000: s += 50
-    s += min(peak["Q"] / 500, 30)
-    s += min(peak["T_peak"] * 40, 40)
+    dl = abs(peak["lambda0_nm"] - 1550)
+    if dl > 40:
+        s -= 80
+    elif dl > 20:
+        s -= 30
+    else:
+        s += max(0, 40 - dl * 2)
+    if peak["Q"] >= 1000:
+        s += 100
+    s += min(peak["Q"] / 100, 50)
+    s += min(peak["T_peak"] * 30, 30)
     s += peak["fit_r2"] * 10
-    s += max(0, 10 - abs(peak["lambda0_nm"] - 1550) / 10)
     return s
 
 
@@ -453,18 +460,19 @@ def optimize(mirror):
     if run_id < 0: run_id = 0
 
     best_overall = None  # (row, score)
+    base_nm = 10  # 高 Q 需要更多镜区孔
 
     # ================================================================
     # Step 1: 扫描 a_c
     # ================================================================
     print(f"\n{'='*60}")
-    print("Step 1: 扫描 a_c (固定 Nt=3 Nm=5 rx_c=rx_m ry_c=ry_m)")
+    print(f"Step 1: 扫描 a_c (固定 Nt=3 Nm={base_nm} rx_c=rx_m ry_c=ry_m)")
     print(f"{'='*60}")
-    a_c_vals = np.round(np.linspace(0.85*a_m, 1.15*a_m, 9), 4)
+    a_c_vals = np.round(np.linspace(0.80*a_m, 1.10*a_m, 13), 4)
     step1_best = None
     for a_c in a_c_vals:
         run_id += 1
-        row = evaluate(run_id, a_c, rx_m, ry_m, Nt=3, Nm=5, mirror=mirror)
+        row = evaluate(run_id, a_c, rx_m, ry_m, Nt=3, Nm=base_nm, mirror=mirror)
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
             best_overall = (row, row["best_peak_score"])
         if step1_best is None or row["best_peak_score"] > step1_best[1]:
@@ -476,13 +484,13 @@ def optimize(mirror):
     # Step 2: 扫描 rx_c
     # ================================================================
     print(f"\n{'='*60}")
-    print(f"Step 2: 扫描 rx_c (固定 a_c={best_ac:.3f} Nt=3 Nm=5 ry_c=ry_m)")
+    print(f"Step 2: 扫描 rx_c (固定 a_c={best_ac:.3f} Nt=3 Nm={base_nm} ry_c=ry_m)")
     print(f"{'='*60}")
     rx_c_vals = np.round(np.linspace(0.70*rx_m, 1.20*rx_m, 7), 4)
     step2_best = None
     for rx_c in rx_c_vals:
         run_id += 1
-        row = evaluate(run_id, best_ac, rx_c, ry_m, Nt=3, Nm=5, mirror=mirror)
+        row = evaluate(run_id, best_ac, rx_c, ry_m, Nt=3, Nm=base_nm, mirror=mirror)
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
             best_overall = (row, row["best_peak_score"])
         if step2_best is None or row["best_peak_score"] > step2_best[1]:
@@ -494,13 +502,13 @@ def optimize(mirror):
     # Step 3: 扫描 ry_c
     # ================================================================
     print(f"\n{'='*60}")
-    print(f"Step 3: 扫描 ry_c (固定 a_c={best_ac:.3f} rx_c={best_rx_c:.3f} Nt=3 Nm=5)")
+    print(f"Step 3: 扫描 ry_c (固定 a_c={best_ac:.3f} rx_c={best_rx_c:.3f} Nt=3 Nm={base_nm})")
     print(f"{'='*60}")
     ry_c_vals = np.round(np.linspace(0.70*ry_m, 1.20*ry_m, 7), 4)
     step3_best = None
     for ry_c in ry_c_vals:
         run_id += 1
-        row = evaluate(run_id, best_ac, best_rx_c, ry_c, Nt=3, Nm=5, mirror=mirror)
+        row = evaluate(run_id, best_ac, best_rx_c, ry_c, Nt=3, Nm=base_nm, mirror=mirror)
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
             best_overall = (row, row["best_peak_score"])
         if step3_best is None or row["best_peak_score"] > step3_best[1]:
@@ -523,7 +531,7 @@ def optimize(mirror):
                 rxc = val if param == "rx_c" else best_rx_c
                 ryc = val if param == "ry_c" else best_ry_c
                 run_id += 1
-                row = evaluate(run_id, ac, rxc, ryc, Nt=3, Nm=5, mirror=mirror)
+                row = evaluate(run_id, ac, rxc, ryc, Nt=3, Nm=base_nm, mirror=mirror)
                 if best_overall is None or row["best_peak_score"] > best_overall[1]:
                     best_overall = (row, row["best_peak_score"])
 
@@ -539,22 +547,38 @@ def optimize(mirror):
     print(f"{'='*60}")
     for Nt in [2, 3, 4, 5, 6]:
         run_id += 1
-        row = evaluate(run_id, best_ac, best_rx_c, best_ry_c, Nt=Nt, Nm=5, mirror=mirror)
+        row = evaluate(run_id, best_ac, best_rx_c, best_ry_c, Nt=Nt, Nm=base_nm, mirror=mirror)
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
             best_overall = (row, row["best_peak_score"])
     best_Nt = best_overall[0]["N_taper"] if best_overall else 3
 
     # ================================================================
-    # Step 6: 扫描 N_mirror (减少孔数)
+    # Step 6: 扫描 N_mirror (增加镜区以提升 Q)
     # ================================================================
     print(f"\n{'='*60}")
-    print(f"Step 6: 扫描 N_mirror (减少孔数)")
+    print(f"Step 6: 扫描 N_mirror (增加镜区孔数)")
     print(f"{'='*60}")
-    for Nm in [6, 5, 4, 3, 2]:
+    best_Nm = base_nm
+    for Nm in [10, 12, 15, 18, 20, 22]:
         run_id += 1
         row = evaluate(run_id, best_ac, best_rx_c, best_ry_c, Nt=best_Nt, Nm=Nm, mirror=mirror)
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
             best_overall = (row, row["best_peak_score"])
+            best_Nm = Nm
+
+    # ================================================================
+    # Step 7: 对准 1550 nm 精细扫描 a_c
+    # ================================================================
+    print(f"\n{'='*60}")
+    print(f"Step 7: 精细扫描 a_c 对准 1550 nm (Nm={best_Nm})")
+    print(f"{'='*60}")
+    fine_ac = np.round(np.linspace(best_ac - 0.03, best_ac + 0.03, 13), 4)
+    for a_c in fine_ac:
+        run_id += 1
+        row = evaluate(run_id, a_c, best_rx_c, best_ry_c, Nt=best_Nt, Nm=best_Nm, mirror=mirror)
+        if best_overall is None or row["best_peak_score"] > best_overall[1]:
+            best_overall = (row, row["best_peak_score"])
+            best_ac = a_c
 
     # ================================================================
     # 输出最佳结果
