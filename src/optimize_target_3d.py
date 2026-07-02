@@ -16,6 +16,10 @@ import os
 from typing import Dict, List, Optional
 
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 
@@ -26,6 +30,8 @@ RESULT_DIR = "results/cavity_3d"
 SUMMARY_JSON = os.path.join(RESULT_DIR, "target_optimization_summary.json")
 BEST_JSON = os.path.join(RESULT_DIR, "best_target_design_3d.json")
 SUMMARY_CSV = os.path.join(RESULT_DIR, "target_optimization_summary.csv")
+SPECTRA_DIR = os.path.join(RESULT_DIR, "spectra")
+LAYOUT_DIR = os.path.join(RESULT_DIR, "layouts")
 
 
 def load_mirror() -> Dict:
@@ -142,6 +148,192 @@ def expand_candidates(base: List[Dict], mirror_list: List[int], taper_list: List
     return expanded
 
 
+def build_hole_layout(mirror: Dict, cavity: Dict) -> List[Dict]:
+    """
+    复刻 run_3d_cavity.build_cavity_3d 的孔位构造逻辑，导出可读排布数据。
+    """
+    a_m = float(mirror["a_m"])
+    rx_m = float(mirror["rx_m"])
+    ry_m = float(mirror["ry_m"])
+    a_c = float(cavity["a_c"])
+    rx_c = float(cavity["rx_c"])
+    ry_c = float(cavity["ry_c"])
+    Nt = int(cavity["N_taper"])
+    Nm = int(cavity["N_mirror"])
+
+    rows: List[Dict] = []
+
+    # 左镜区
+    for i in range(Nm):
+        x = -(Nm - i + Nt) * a_m
+        rows.append({
+            "side": "L",
+            "region": "mirror",
+            "order_in_region": i + 1,
+            "x_um": float(x),
+            "a_local_um": float(a_m),
+            "rx_um": float(rx_m),
+            "ry_um": float(ry_m),
+            "diameter_x_um": float(2 * rx_m),
+            "diameter_y_um": float(2 * ry_m),
+        })
+
+    # 左渐变区
+    for i in range(1, Nt + 1):
+        t = i / Nt
+        ai = a_c + (a_m - a_c) * t**2
+        rxi = rx_c + (rx_m - rx_c) * t**2
+        ryi = ry_c + (ry_m - ry_c) * t**2
+        x = -(Nt - i + 0.5) * ai
+        rows.append({
+            "side": "L",
+            "region": "taper",
+            "order_in_region": i,
+            "x_um": float(x),
+            "a_local_um": float(ai),
+            "rx_um": float(rxi),
+            "ry_um": float(ryi),
+            "diameter_x_um": float(2 * rxi),
+            "diameter_y_um": float(2 * ryi),
+        })
+
+    # 右渐变区
+    for i in range(1, Nt + 1):
+        t = i / Nt
+        ai = a_c + (a_m - a_c) * t**2
+        rxi = rx_c + (rx_m - rx_c) * t**2
+        ryi = ry_c + (ry_m - ry_c) * t**2
+        x = (Nt - i + 0.5) * ai
+        rows.append({
+            "side": "R",
+            "region": "taper",
+            "order_in_region": i,
+            "x_um": float(x),
+            "a_local_um": float(ai),
+            "rx_um": float(rxi),
+            "ry_um": float(ryi),
+            "diameter_x_um": float(2 * rxi),
+            "diameter_y_um": float(2 * ryi),
+        })
+
+    # 右镜区
+    for i in range(Nm):
+        x = (Nm - i + Nt) * a_m
+        rows.append({
+            "side": "R",
+            "region": "mirror",
+            "order_in_region": i + 1,
+            "x_um": float(x),
+            "a_local_um": float(a_m),
+            "rx_um": float(rx_m),
+            "ry_um": float(ry_m),
+            "diameter_x_um": float(2 * rx_m),
+            "diameter_y_um": float(2 * ry_m),
+        })
+
+    rows.sort(key=lambda r: r["x_um"])
+    return rows
+
+
+def save_candidate_artifacts(candidate_idx: int, mirror: Dict, cavity: Dict, wl: np.ndarray, T: np.ndarray) -> Dict:
+    os.makedirs(SPECTRA_DIR, exist_ok=True)
+    os.makedirs(LAYOUT_DIR, exist_ok=True)
+
+    prefix = f"candidate_{candidate_idx:03d}"
+
+    # 1) 透射率频谱数据
+    spec_csv = os.path.join(SPECTRA_DIR, f"{prefix}_transmission.csv")
+    np.savetxt(
+        spec_csv,
+        np.column_stack([wl, T]),
+        delimiter=",",
+        header="wavelength_nm,transmission",
+        comments=""
+    )
+
+    spec_png = os.path.join(SPECTRA_DIR, f"{prefix}_transmission.png")
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.plot(wl, T, lw=1.5, color="tab:blue")
+    if mirror.get("gap_start_nm", 0) and mirror.get("gap_end_nm", 0):
+        ax.axvspan(mirror["gap_start_nm"], mirror["gap_end_nm"], alpha=0.12, color="tab:red", label="mirror bandgap")
+    ax.set_xlim(1400, 1700)
+    ax.set_xlabel("Wavelength (nm)")
+    ax.set_ylabel("Transmission")
+    ax.set_title(
+        f"3D Transmission #{candidate_idx} | a_c={cavity['a_c']:.4f}, rx_c={cavity['rx_c']:.4f}, "
+        f"ry_c={cavity['ry_c']:.4f}, Nt={cavity['N_taper']}, Nm={cavity['N_mirror']}"
+    )
+    ax.grid(True, alpha=0.3)
+    if mirror.get("gap_start_nm", 0) and mirror.get("gap_end_nm", 0):
+        ax.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(spec_png, dpi=150)
+    plt.close(fig)
+
+    # 2) 椭圆柱排布数据
+    layout = build_hole_layout(mirror, cavity)
+
+    layout_csv = os.path.join(LAYOUT_DIR, f"{prefix}_holes_layout.csv")
+    with open(layout_csv, "w", newline="") as f:
+        wr = csv.DictWriter(
+            f,
+            fieldnames=[
+                "side", "region", "order_in_region",
+                "x_um", "a_local_um", "rx_um", "ry_um",
+                "diameter_x_um", "diameter_y_um"
+            ],
+        )
+        wr.writeheader()
+        wr.writerows(layout)
+
+    layout_json = os.path.join(LAYOUT_DIR, f"{prefix}_holes_layout.json")
+    with open(layout_json, "w") as f:
+        json.dump(
+            {
+                "mirror": mirror,
+                "cavity": cavity,
+                "n_holes": len(layout),
+                "holes": layout,
+            },
+            f,
+            indent=2,
+        )
+
+    # 3) 椭圆柱排列可视化（x-y 截面）
+    layout_png = os.path.join(LAYOUT_DIR, f"{prefix}_holes_layout.png")
+    fig, ax = plt.subplots(figsize=(12, 3.2))
+    for hole in layout:
+        color = "tab:red" if hole["region"] == "mirror" else "tab:orange"
+        e = Ellipse(
+            (hole["x_um"], 0.0),
+            width=hole["diameter_x_um"],
+            height=hole["diameter_y_um"],
+            fill=False,
+            edgecolor=color,
+            lw=1.2,
+            alpha=0.9,
+        )
+        ax.add_patch(e)
+    xs = [h["x_um"] for h in layout] if layout else [-1.0, 1.0]
+    ax.set_xlim(min(xs) - 1.0, max(xs) + 1.0)
+    ax.set_ylim(-max([h["diameter_y_um"] for h in layout], default=1.0), max([h["diameter_y_um"] for h in layout], default=1.0))
+    ax.set_xlabel("x (um)")
+    ax.set_ylabel("y (um)")
+    ax.set_title(f"Ellipse-hole layout #{candidate_idx} (mirror=red, taper=orange)")
+    ax.grid(True, alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(layout_png, dpi=150)
+    plt.close(fig)
+
+    return {
+        "transmission_csv": spec_csv,
+        "transmission_png": spec_png,
+        "holes_layout_csv": layout_csv,
+        "holes_layout_json": layout_json,
+        "holes_layout_png": layout_png,
+    }
+
+
 def lorentzian(x, x0, gamma, A, offset):
     return offset + A * gamma**2 / ((x - x0)**2 + gamma**2)
 
@@ -215,7 +407,7 @@ def target_hit(peak: Dict, mirror_gap_width_nm: float) -> bool:
     )
 
 
-def evaluate_design(mirror: Dict, cand: Dict, quick: bool = False) -> Dict:
+def evaluate_design(candidate_idx: int, mirror: Dict, cand: Dict, quick: bool = False) -> Dict:
     if quick:
         c3d.nfreq = 1200
         c3d.resolution = 16
@@ -257,6 +449,7 @@ def evaluate_design(mirror: Dict, cand: Dict, quick: bool = False) -> Dict:
         peak_rows.append(fit)
 
     best_peak = max(peak_rows, key=lambda x: x["score_3d"]) if peak_rows else None
+    artifacts = save_candidate_artifacts(candidate_idx, mirror, cavity, wl, T)
     return {
         "candidate": cand,
         "n_peaks": len(peak_rows),
@@ -265,6 +458,7 @@ def evaluate_design(mirror: Dict, cand: Dict, quick: bool = False) -> Dict:
         "T_min_full": float(np.min(T)),
         "T_max_full": float(np.max(T)),
         "mirror_gap_width_nm": float(mirror["gap_width_nm"]),
+        "artifacts": artifacts,
     }
 
 
@@ -274,18 +468,23 @@ def write_summary_csv(rows: List[Dict]) -> None:
         wr.writerow([
             "idx", "source", "run_id", "a_c", "rx_c", "ry_c", "N_taper", "N_mirror",
             "Q_3d", "lambda0_nm_3d", "T_peak_3d", "T_floor_local_3d",
-            "fit_r2_3d", "score_3d", "target_hit"
+            "fit_r2_3d", "score_3d", "target_hit",
+            "transmission_csv", "transmission_png", "holes_layout_csv", "holes_layout_json", "holes_layout_png"
         ])
         for i, r in enumerate(rows, 1):
             c = r["candidate"]
             b = r.get("best_peak_3d") or {}
+            a = r.get("artifacts") or {}
             wr.writerow([
                 i, c.get("source", ""), c.get("run_id", ""),
                 c.get("a_c", 0), c.get("rx_c", 0), c.get("ry_c", 0),
                 c.get("N_taper", 0), c.get("N_mirror", 0),
                 b.get("Q", 0), b.get("lambda0_nm", 0), b.get("T_peak", 0),
                 b.get("T_floor_local", 0), b.get("fit_r2", 0),
-                b.get("score_3d", -1e9), b.get("target_hit", False)
+                b.get("score_3d", -1e9), b.get("target_hit", False),
+                a.get("transmission_csv", ""), a.get("transmission_png", ""),
+                a.get("holes_layout_csv", ""), a.get("holes_layout_json", ""),
+                a.get("holes_layout_png", ""),
             ])
 
 
@@ -301,6 +500,8 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(RESULT_DIR, exist_ok=True)
+    os.makedirs(SPECTRA_DIR, exist_ok=True)
+    os.makedirs(LAYOUT_DIR, exist_ok=True)
     mirror = load_mirror()
     base_candidates = load_2d_candidates(args.best_csv, args.top_k)
     if not base_candidates:
@@ -329,7 +530,7 @@ def main():
     results: List[Dict] = []
     for i, c in enumerate(candidates, 1):
         print(f"\n[{i}/{len(candidates)}] run 3D candidate...", flush=True)
-        res = evaluate_design(mirror, c, quick=args.quick)
+        res = evaluate_design(i, mirror, c, quick=args.quick)
         results.append(res)
         bp = res.get("best_peak_3d")
         if bp:
@@ -380,6 +581,8 @@ def main():
         print("no valid 3D peak found.")
     print(f"summary: {SUMMARY_JSON}")
     print(f"best: {BEST_JSON}")
+    print(f"spectra dir: {SPECTRA_DIR}")
+    print(f"layouts dir: {LAYOUT_DIR}")
     print("=" * 70)
 
 
