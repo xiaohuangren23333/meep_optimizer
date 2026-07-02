@@ -1,24 +1,38 @@
 #!/usr/bin/env python3
 """
-3D FDTD 缺陷腔验证
-=================
-基于 2D 优化结果 (Q=113, T=0.81 在 2D)，在 3D 正确脊型波导中验证实际 Q 值。
+3D FDTD 缺陷腔验证（可靠归一化 + 约束 Lorentzian 拟合）
+======================================================
+- 有孔/参考使用相同 cell（与 optimize_3d_ridge.py 一致）
+- 保存原始 flux + 校验元数据，便于独立 FDTD 复现
 """
+import json
+import os
+import sys
+import time
+
 import meep as mp
 import numpy as np
-import os, time, json, sys
 import matplotlib
-matplotlib.use('Agg')
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from spectrum_analysis import (
+    extract_peaks,
+    load_bandgap_from_json,
+    normalize_transmission,
+    save_spectrum_bundle,
+    validate_normalized_spectrum,
+    lorentzian,
+)
 
 # ============================================================================
-# 结构参数
+# 结构参数（与 optimize_3d_ridge / optimize_cavity_2d 一致）
 # ============================================================================
-n_wg   = 2.18
-n_air  = 1.0
-n_sub  = 1.44
-w_wg   = 1.5
+n_wg = 2.18
+n_air = 1.0
+n_sub = 1.44
+w_wg = 1.5
 h_slab = 0.2
 h_ridge = 0.2
 h_total = 0.4
@@ -26,271 +40,301 @@ h_total = 0.4
 lambda_min = 1.25
 lambda_max = 1.75
 fcen = 1.0 / 1.50
-df   = (1.0/lambda_min - 1.0/lambda_max) / 2.0
+df = (1.0 / lambda_min - 1.0 / lambda_max) / 2.0
 nfreq = 2000
 
 resolution = 20
 dpml = 1.0
 pad = 2.0
 
-os.makedirs("results/cavity_3d", exist_ok=True)
+OUT_DIR = "results/cavity_3d"
+os.makedirs(OUT_DIR, exist_ok=True)
 
-# ============================================================================
-# Lorentzian 拟合
-# ============================================================================
-def lorentzian(x, x0, gamma, A, offset):
-    return offset + A * gamma**2 / ((x - x0)**2 + gamma**2)
 
-# ============================================================================
-# 3D 缺陷腔构建
-# ============================================================================
 def build_cavity_3d(mirror, cavity):
-    """构建 3D 二次渐变缺陷腔"""
-    a_m = mirror["a_m"]; rx_m = mirror["rx_m"]; ry_m = mirror["ry_m"]
-    a_c = cavity["a_c"]; rx_c = cavity["rx_c"]; ry_c = cavity["ry_c"]
+    a_m, rx_m, ry_m = mirror["a_m"], mirror["rx_m"], mirror["ry_m"]
+    a_c, rx_c, ry_c = cavity["a_c"], cavity["rx_c"], cavity["ry_c"]
     Nt = cavity.get("N_taper", 3)
     Nm = cavity.get("N_mirror", 5)
 
     total_holes = 2 * (Nm + Nt)
-    sx = 2*dpml + max(total_holes * a_m, 4.0) + 2*pad
-    sy = 2*dpml + w_wg + 2*pad
-    sz = 2*dpml + h_total + 1.5
+    sx = 2 * dpml + max(total_holes * a_m, 4.0) + 2 * pad
+    sy = 2 * dpml + w_wg + 2 * pad
+    sz = 2 * dpml + h_total + 1.5
 
-    # 衬底
-    sub = mp.Block(material=mp.Medium(index=n_sub),
-                   center=mp.Vector3(0,0,-0.5),
-                   size=mp.Vector3(mp.inf, mp.inf, 1.0))
-    # 平板层
-    slab = mp.Block(material=mp.Medium(index=n_wg),
-                    center=mp.Vector3(0,0,h_slab/2),
-                    size=mp.Vector3(mp.inf, mp.inf, h_slab))
-    # 脊型层
-    ridge = mp.Block(material=mp.Medium(index=n_wg),
-                     center=mp.Vector3(0,0,h_slab+h_ridge/2),
-                     size=mp.Vector3(mp.inf, w_wg, h_ridge))
-
+    sub = mp.Block(
+        material=mp.Medium(index=n_sub),
+        center=mp.Vector3(0, 0, -0.5),
+        size=mp.Vector3(mp.inf, mp.inf, 1.0),
+    )
+    slab = mp.Block(
+        material=mp.Medium(index=n_wg),
+        center=mp.Vector3(0, 0, h_slab / 2),
+        size=mp.Vector3(mp.inf, mp.inf, h_slab),
+    )
+    ridge = mp.Block(
+        material=mp.Medium(index=n_wg),
+        center=mp.Vector3(0, 0, h_slab + h_ridge / 2),
+        size=mp.Vector3(mp.inf, w_wg, h_ridge),
+    )
     geom = [sub, slab, ridge]
 
-    # 左侧: 镜区 → 渐变区
     for i in range(Nm):
         x = -(Nm - i + Nt) * a_m
-        geom.append(mp.Ellipsoid(material=mp.Medium(index=n_air),
-                                center=mp.Vector3(x, 0, h_total/2),
-                                size=mp.Vector3(2*rx_m, 2*ry_m, h_total)))
+        geom.append(
+            mp.Ellipsoid(
+                material=mp.Medium(index=n_air),
+                center=mp.Vector3(x, 0, h_total / 2),
+                size=mp.Vector3(2 * rx_m, 2 * ry_m, h_total),
+            )
+        )
     for i in range(1, Nt + 1):
         t = i / Nt
         ai = a_c + (a_m - a_c) * t**2
         rxi = rx_c + (rx_m - rx_c) * t**2
         ryi = ry_c + (ry_m - ry_c) * t**2
         x = -(Nt - i + 0.5) * ai
-        geom.append(mp.Ellipsoid(material=mp.Medium(index=n_air),
-                                center=mp.Vector3(x, 0, h_total/2),
-                                size=mp.Vector3(2*rxi, 2*ryi, h_total)))
-
-    # 右侧: 渐变区 → 镜区
+        geom.append(
+            mp.Ellipsoid(
+                material=mp.Medium(index=n_air),
+                center=mp.Vector3(x, 0, h_total / 2),
+                size=mp.Vector3(2 * rxi, 2 * ryi, h_total),
+            )
+        )
     for i in range(1, Nt + 1):
         t = i / Nt
         ai = a_c + (a_m - a_c) * t**2
         rxi = rx_c + (rx_m - rx_c) * t**2
         ryi = ry_c + (ry_m - ry_c) * t**2
         x = (Nt - i + 0.5) * ai
-        geom.append(mp.Ellipsoid(material=mp.Medium(index=n_air),
-                                center=mp.Vector3(x, 0, h_total/2),
-                                size=mp.Vector3(2*rxi, 2*ryi, h_total)))
+        geom.append(
+            mp.Ellipsoid(
+                material=mp.Medium(index=n_air),
+                center=mp.Vector3(x, 0, h_total / 2),
+                size=mp.Vector3(2 * rxi, 2 * ryi, h_total),
+            )
+        )
     for i in range(Nm):
         x = (Nm - i + Nt) * a_m
-        geom.append(mp.Ellipsoid(material=mp.Medium(index=n_air),
-                                center=mp.Vector3(x, 0, h_total/2),
-                                size=mp.Vector3(2*rx_m, 2*ry_m, h_total)))
-
+        geom.append(
+            mp.Ellipsoid(
+                material=mp.Medium(index=n_air),
+                center=mp.Vector3(x, 0, h_total / 2),
+                size=mp.Vector3(2 * rx_m, 2 * ry_m, h_total),
+            )
+        )
     return geom, sx, sy, sz
 
 
-def build_ref_geom():
-    """参考波导（无孔）"""
-    sub = mp.Block(material=mp.Medium(index=n_sub),
-                   center=mp.Vector3(0,0,-0.5),
-                   size=mp.Vector3(mp.inf, mp.inf, 1.0))
-    slab = mp.Block(material=mp.Medium(index=n_wg),
-                    center=mp.Vector3(0,0,h_slab/2),
-                    size=mp.Vector3(mp.inf, mp.inf, h_slab))
-    ridge = mp.Block(material=mp.Medium(index=n_wg),
-                     center=mp.Vector3(0,0,h_slab+h_ridge/2),
-                     size=mp.Vector3(mp.inf, w_wg, h_ridge))
+def build_ref_geom_3d():
+    """无孔参考波导（与 optimize_3d_ridge build_geom(N=0) 相同）"""
+    sub = mp.Block(
+        material=mp.Medium(index=n_sub),
+        center=mp.Vector3(0, 0, -0.5),
+        size=mp.Vector3(mp.inf, mp.inf, 1.0),
+    )
+    slab = mp.Block(
+        material=mp.Medium(index=n_wg),
+        center=mp.Vector3(0, 0, h_slab / 2),
+        size=mp.Vector3(mp.inf, mp.inf, h_slab),
+    )
+    ridge = mp.Block(
+        material=mp.Medium(index=n_wg),
+        center=mp.Vector3(0, 0, h_slab + h_ridge / 2),
+        size=mp.Vector3(mp.inf, w_wg, h_ridge),
+    )
     return [sub, slab, ridge]
 
 
-# ============================================================================
-# 仿真函数
-# ============================================================================
-def run_sim(geom, cell_sx, cell_sy, cell_sz):
-    """运行单次 3D FDTD，返回波长和透射率"""
-    cell = mp.Vector3(cell_sx, cell_sy, cell_sz)
-    src_x = -cell_sx/2 + dpml + 0.5
-    mon_x = cell_sx/2 - dpml - 0.5
+def run_cavity_fdtd(geom_hole, geom_ref, sx, sy, sz, decay=1e-5):
+    """
+    有孔 + 参考 FDTD，相同 cell / 源 / 监视器。
+    返回 freqs, flux_h, flux_r
+    """
+    cell = mp.Vector3(sx, sy, sz)
+    src_x = -sx / 2 + dpml + 0.5
+    mon_x = sx / 2 - dpml - 0.5
+    sources = [
+        mp.Source(
+            mp.GaussianSource(fcen, fwidth=df),
+            component=mp.Ey,
+            center=mp.Vector3(src_x, 0, h_total / 2),
+            size=mp.Vector3(0, w_wg, h_total),
+        )
+    ]
+    freg = mp.FluxRegion(
+        center=mp.Vector3(mon_x, 0, h_total / 2),
+        size=mp.Vector3(0, 2 * w_wg, 2 * h_total),
+    )
+    pt = mp.Vector3(mon_x, 0, h_total / 2)
 
-    sources = [mp.Source(mp.GaussianSource(fcen, fwidth=df), component=mp.Ey,
-                         center=mp.Vector3(src_x, 0, h_total/2),
-                         size=mp.Vector3(0, w_wg, h_total))]
-
-    sim = mp.Simulation(cell_size=cell, resolution=resolution,
-                        geometry=geom, sources=sources,
-                        boundary_layers=[mp.PML(dpml)])
-
-    freg = mp.FluxRegion(center=mp.Vector3(mon_x,0,h_total/2),
-                          size=mp.Vector3(0, 2*w_wg, 2*h_total))
+    sim = mp.Simulation(
+        cell_size=cell,
+        resolution=resolution,
+        geometry=geom_hole,
+        sources=sources,
+        boundary_layers=[mp.PML(dpml)],
+    )
     trans = sim.add_flux(fcen, df, nfreq, freg)
-
-    # 腔需要更长的运行时间
-    sim.run(until_after_sources=mp.stop_when_fields_decayed(
-        50, mp.Ey, mp.Vector3(mon_x,0,h_total/2), 1e-5))
-
+    t0 = time.time()
+    sim.run(until_after_sources=mp.stop_when_fields_decayed(50, mp.Ey, pt, decay))
+    t_hole = time.time() - t0
     freqs = np.array(mp.get_flux_freqs(trans))
-    flux = np.array(mp.get_fluxes(trans))
+    flux_h = np.array(mp.get_fluxes(trans))
     sim.reset_meep()
-    return freqs, flux
+
+    sim_r = mp.Simulation(
+        cell_size=cell,
+        resolution=resolution,
+        geometry=geom_ref,
+        sources=sources,
+        boundary_layers=[mp.PML(dpml)],
+    )
+    trans_r = sim_r.add_flux(fcen, df, nfreq, freg)
+    t0 = time.time()
+    sim_r.run(until_after_sources=mp.stop_when_fields_decayed(50, mp.Ey, pt, decay))
+    t_ref = time.time() - t0
+    flux_r = np.array(mp.get_fluxes(trans_r))
+    sim_r.reset_meep()
+
+    meta = {
+        "cell_sx_um": sx,
+        "cell_sy_um": sy,
+        "cell_sz_um": sz,
+        "resolution": resolution,
+        "dpml": dpml,
+        "fcen": fcen,
+        "df": df,
+        "nfreq": nfreq,
+        "source": "GaussianSource(Ey)",
+        "source_size": f"(0, {w_wg}, {h_total})",
+        "flux_region": f"(0, {2*w_wg}, {2*h_total})",
+        "decay_threshold": decay,
+        "time_hole_s": t_hole,
+        "time_ref_s": t_ref,
+        "normalization": "T = flux_hole / flux_ref, same cell",
+    }
+    return freqs, flux_h, flux_r, meta
 
 
-# ============================================================================
-# 主程序
-# ============================================================================
+def plot_spectrum(wl, T, bg, best_peak, cavity, out_path):
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(wl, T, "b-", lw=1.5, label="3D FDTD (normalized)")
+    ax.axvspan(bg["bandgap_start_nm"], bg["bandgap_end_nm"], alpha=0.1, color="red",
+               label=f"bandgap ({bg['bandgap_start_nm']:.0f}-{bg['bandgap_end_nm']:.0f} nm)")
+    ax.axvline(1550, color="gray", ls=":", lw=1, alpha=0.7, label="target 1550 nm")
+    if best_peak and best_peak.get("valid"):
+        x0, g = best_peak["lambda0_nm"], best_peak["gamma_nm"]
+        wl_f = np.linspace(x0 - 8 * g, x0 + 8 * g, 200)
+        T_f = lorentzian(wl_f, x0, g, best_peak["A"], best_peak["offset"])
+        ax.plot(wl_f, T_f, "r-", lw=2, alpha=0.7,
+                label=f"fit Q={best_peak['Q']:.0f} λ={x0:.1f}nm")
+        ax.axvline(x0, color="r", ls="--", lw=1.5)
+    ax.set_xlim(1450, 1650)
+    ax.set_ylim(-0.02, min(1.05, T.max() * 1.15))
+    ax.set_xlabel("Wavelength (nm)")
+    ax.set_ylabel("Transmission")
+    ax.set_title(
+        f"3D Cavity: a_c={cavity['a_c']:.4f} Nt={cavity['N_taper']} Nm={cavity['N_mirror']}"
+    )
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=150)
+    plt.close()
+
+
 if __name__ == "__main__":
     print("=" * 70)
-    print("3D 缺陷腔 FDTD 验证")
+    print("3D 缺陷腔 FDTD 验证 (fixed normalization + fitting)")
     print("=" * 70)
 
-    # 读取 2D 最佳设计
     with open("results/best_cavity_design.json") as f:
         design = json.load(f)
 
-    mirror = {
-        "a_m": design["a_m"], "rx_m": design["rx_m"], "ry_m": design["ry_m"]
-    }
+    mirror = {"a_m": design["a_m"], "rx_m": design["rx_m"], "ry_m": design["ry_m"]}
     cavity = {
-        "a_c": design["a_c"], "rx_c": design["rx_c"], "ry_c": design["ry_c"],
-        "N_taper": design["N_taper"], "N_mirror": design["N_mirror"]
+        "a_c": design["a_c"],
+        "rx_c": design["rx_c"],
+        "ry_c": design["ry_c"],
+        "N_taper": design["N_taper"],
+        "N_mirror": design["N_mirror"],
     }
+    bg = load_bandgap_from_json()
 
-    print(f"\n2D 最佳设计:")
-    print(f"  镜区: a_m={mirror['a_m']:.3f} rx_m={mirror['rx_m']:.3f} ry_m={mirror['ry_m']:.3f}")
-    print(f"  缺陷: a_c={cavity['a_c']:.4f} rx_c={cavity['rx_c']:.3f} ry_c={cavity['ry_c']:.3f}")
-    print(f"  N_taper={cavity['N_taper']} N_mirror={cavity['N_mirror']}")
-    print(f"  2D 预测: Q={design['Q']:.0f} T_peak={design['T_peak']:.3f} λ₀={design['lambda0_nm']:.1f}nm")
+    print(f"\n2D 设计: Q={design['Q']:.0f} T={design['T_peak']:.3f} λ={design['lambda0_nm']:.1f}nm")
+    print(f"禁带 ({bg['source']}): {bg['bandgap_start_nm']:.0f}-{bg['bandgap_end_nm']:.0f} nm")
 
-    # 构建几何
-    geom, sx, sy, sz = build_cavity_3d(mirror, cavity)
-    print(f"\n3D 计算区域: {sx:.1f} x {sy:.1f} x {sz:.1f}")
+    geom_h, sx, sy, sz = build_cavity_3d(mirror, cavity)
+    geom_r = build_ref_geom_3d()
+    print(f"Cell (same for hole/ref): {sx:.2f} x {sy:.2f} x {sz:.2f} μm")
 
-    # 有孔腔仿真
-    t0 = time.time()
-    print(f"\n运行 3D 腔仿真...", end="", flush=True)
-    freqs_h, flux_h = run_sim(geom, sx, sy, sz)
-    print(f" {time.time()-t0:.1f}s")
+    print("\n运行 3D FDTD (hole + ref)...", flush=True)
+    freqs, flux_h, flux_r, sim_meta = run_cavity_fdtd(geom_h, geom_r, sx, sy, sz)
+    wl, T, fh, fr = normalize_transmission(freqs, flux_h, freqs, flux_r)
+    delta_wl = (lambda_max - lambda_min) * 1000 / nfreq
 
-    # 参考波导 (无孔)
-    ref_sx = 2*dpml + 4.0 + 2*pad  # 短区域
-    ref_geom = build_ref_geom()
-    t0 = time.time()
-    print(f"运行 3D 参考波导...", end="", flush=True)
-    freqs_r, flux_r = run_sim(ref_geom, ref_sx, sy, sz)
-    print(f" {time.time()-t0:.1f}s")
+    validation = validate_normalized_spectrum(wl, T, fh, fr, label="3D_cavity")
+    print(f"\n数据校验: reliable={validation['reliable']}")
+    print(f"  T range: [{validation['T_min']:.4f}, {validation['T_max']:.4f}]")
+    if validation["issues"]:
+        print(f"  ❌ issues: {validation['issues']}")
+    if validation["warnings"]:
+        print(f"  ⚠ warnings: {validation['warnings']}")
 
-    # 归一化
-    T = np.divide(flux_h, flux_r, out=np.zeros_like(flux_h), where=flux_r > 1e-15)
-    wl = 1000.0 / freqs_r
+    peaks = extract_peaks(
+        wl, T,
+        bandgap_start=bg["bandgap_start_nm"],
+        bandgap_end=bg["bandgap_end_nm"],
+        target_lambda=1550.0,
+        delta_wl=delta_wl,
+    )
+    valid_peaks = [p for p in peaks if p["valid"]]
+    best = valid_peaks[0] if valid_peaks else (peaks[0] if peaks else None)
 
-    # 排序
-    idx = np.argsort(wl)
-    wl, T = wl[idx], T[idx]
+    print(f"\n检测到 {len(peaks)} 个峰，有效 {len(valid_peaks)} 个")
+    for i, p in enumerate(peaks[:5]):
+        flag = "✅" if p["valid"] else "❌"
+        print(
+            f"  {flag} #{i+1}: λ={p['lambda0_nm']:.1f} Q={p['Q']:.0f} "
+            f"T={p['T_peak']:.3f} FWHM={p['FWHM_nm']:.3f} R²={p['fit_r2']:.3f}"
+            + (f" ({p['invalid_reason']})" if not p["valid"] else "")
+        )
 
-    # 保存 CSV
-    csv_path = "results/cavity_3d/cavity_3d_spectrum.csv"
-    np.savetxt(csv_path, np.column_stack([wl, T]),
-               delimiter=",", header="wavelength_nm,transmission", comments="")
+    save_spectrum_bundle(
+        OUT_DIR, "cavity_3d",
+        wl, T, fh, fr, validation, peaks, best, sim_meta,
+    )
+    # 兼容旧文件名
+    np.savetxt(
+        f"{OUT_DIR}/cavity_3d_spectrum.csv",
+        np.column_stack([wl, T]),
+        delimiter=",", header="wavelength_nm,transmission", comments="",
+    )
+    plot_spectrum(wl, T, bg, best, cavity, f"{OUT_DIR}/cavity_3d_spectrum.png")
 
-    # 找峰
-    from scipy.signal import find_peaks
-    mask = (wl >= 1450) & (wl <= 1650)
-    wl_focus, T_focus = wl[mask], T[mask]
-    peaks, props = find_peaks(T_focus, height=0.01, prominence=0.005, width=3)
-
-    print(f"\n{'='*50}")
-    print(f"3D 缺陷腔结果")
-    print(f"{'='*50}")
-    print(f"  T 范围: [{T.min():.4f}, {T.max():.4f}]")
-    print(f"  找到 {len(peaks)} 个峰")
-
-    best_fit = None
-    if len(peaks) > 0:
-        for k, idx in enumerate(peaks):
-            left = max(idx - 15, 0)
-            right = min(idx + 15, len(wl_focus) - 1)
-            wl_seg, T_seg = wl_focus[left:right+1], T_focus[left:right+1]
-            if len(wl_seg) < 7:
-                continue
-            try:
-                x0_g = wl_focus[idx]
-                A_g = T_focus[idx] - T_focus[min(left + 3, len(wl_focus)-1)]
-                gamma_g = 5.0
-                popt, _ = curve_fit(lorentzian, wl_seg, T_seg,
-                                    p0=[x0_g, gamma_g, A_g, min(T_seg)],
-                                    maxfev=5000)
-                x0, gamma, A, offset = popt
-                Q = x0 / (2*gamma)
-                T_peak = lorentzian(x0, *popt)
-                residuals = T_seg - lorentzian(wl_seg, *popt)
-                ss_res = np.sum(residuals**2)
-                ss_tot = np.sum((T_seg - np.mean(T_seg))**2)
-                r2 = 1 - ss_res/ss_tot if ss_tot > 0 else 0
-                print(f"\n  峰 #{k+1}:")
-                print(f"    λ₀ = {x0:.2f} nm")
-                print(f"    FWHM = {2*gamma:.3f} nm")
-                print(f"    Q = {Q:.0f}")
-                print(f"    T_peak = {T_peak:.4f}")
-                print(f"    R² = {r2:.4f}")
-                best_fit = {"lambda0_nm": float(x0), "FWHM_nm": float(2*gamma),
-                           "Q": float(Q), "T_peak": float(T_peak), "fit_r2": float(r2)}
-            except Exception as e:
-                print(f"  峰 #{k+1}: 拟合失败 ({e})")
-
-    # 绘图
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(wl, T, 'b-', lw=1.5, label='3D FDTD')
-    ax.axvspan(1530, 1575, alpha=0.08, color='red', label='mirror bandgap')
-    if best_fit:
-        ax.axvline(best_fit["lambda0_nm"], color='r', ls='--', lw=2,
-                   label=f"Q={best_fit['Q']:.0f}, λ₀={best_fit['lambda0_nm']:.1f}nm")
-        # 绘制拟合曲线
-        wl_f = np.linspace(best_fit["lambda0_nm"] - 20, best_fit["lambda0_nm"] + 20, 200)
-        T_f = lorentzian(wl_f, best_fit["lambda0_nm"], best_fit["FWHM_nm"]/2,
-                        best_fit["T_peak"] - min(T_focus), min(T_focus))
-        ax.plot(wl_f, T_f, 'r-', lw=3, alpha=0.4)
-    ax.set_xlim(1450, 1650)
-    ax.set_ylim(-0.02, 1.02)
-    ax.set_xlabel("Wavelength (nm)")
-    ax.set_ylabel("Transmission")
-    ax.set_title(f"3D Cavity: a_c={cavity['a_c']:.4f} rx_c={cavity['rx_c']:.3f} ry_c={cavity['ry_c']:.3f}")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    png_path = "results/cavity_3d/cavity_3d_spectrum.png"
-    plt.savefig(png_path, dpi=150)
-    plt.close()
-    print(f"\n✅ 频谱图: {png_path}")
-
-    # 保存结果 JSON
     result = {
         "2D_design": design,
-        "3D_result": best_fit,
-        "T_range": [float(T.min()), float(T.max())],
-        "T_max_wavelength_nm": float(wl[T.argmax()]),
+        "3D_result": best,
+        "validation": validation,
+        "bandgap": bg,
+        "simulation": sim_meta,
+        "n_peaks_found": len(peaks),
+        "n_valid_peaks": len(valid_peaks),
+        "T_range": [validation["T_min"], validation["T_max"]],
+        "data_reliable": validation["reliable"] and best is not None and best.get("valid"),
     }
-    with open("results/cavity_3d/cavity_3d_result.json", "w") as f:
+    with open(f"{OUT_DIR}/cavity_3d_result.json", "w") as f:
         json.dump(result, f, indent=2)
 
     print(f"\n{'='*70}")
-    if best_fit:
-        print(f"🏆 3D 缺陷腔验证: Q = {best_fit['Q']:.0f}, λ₀ = {best_fit['lambda0_nm']:.1f}nm, T_peak = {best_fit['T_peak']:.3f}")
+    if best and best.get("valid"):
+        print(
+            f"3D 腔模: Q={best['Q']:.0f}, λ₀={best['lambda0_nm']:.1f}nm, "
+            f"T_peak={best['T_peak']:.3f}, FWHM={best['FWHM_nm']:.3f}nm"
+        )
     else:
-        print(f"⚠️ 未检测到腔模")
+        print("⚠ 未找到禁带内可靠腔模；请检查频谱或增大 N_mirror")
+    print(f"原始 flux: {OUT_DIR}/cavity_3d_flux.csv")
+    print(f"分析: {OUT_DIR}/cavity_3d_analysis.json")
     print(f"{'='*70}")

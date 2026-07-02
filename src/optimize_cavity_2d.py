@@ -20,10 +20,15 @@ import meep as mp
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-from scipy.signal import find_peaks
 
 warnings.filterwarnings('ignore')
+
+from spectrum_analysis import (
+    extract_peaks as _extract_peaks,
+    fit_peak,
+    lorentzian,
+    validate_normalized_spectrum,
+)
 
 # ============================================================================
 # 常量
@@ -191,80 +196,22 @@ def run_cavity_sim(geom, cell_sx):
 
 
 # ============================================================================
-# Lorentzian 拟合
-# ============================================================================
-def lorentzian(x, x0, gamma, A, offset):
-    return offset + A * gamma**2 / ((x - x0)**2 + gamma**2)
-
-
-def fit_peak(wl_seg, T_seg):
-    if len(wl_seg) < 7:
-        return None
-    try:
-        x0_guess = wl_seg[np.argmax(T_seg)]
-        A_guess = max(T_seg) - min(T_seg)
-        gamma_guess = (wl_seg[-1] - wl_seg[0]) / 4
-        offset_guess = min(T_seg)
-        popt, _ = curve_fit(lorentzian, wl_seg, T_seg,
-                            p0=[x0_guess, gamma_guess, A_guess, offset_guess],
-                            maxfev=5000)
-        x0, gamma, A, offset = popt
-        T_peak = lorentzian(x0, *popt)
-        FWHM = 2 * gamma
-        residuals = T_seg - lorentzian(wl_seg, *popt)
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum((T_seg - np.mean(T_seg))**2)
-        r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0
-        return {"lambda0_nm": float(x0), "FWHM_nm": float(FWHM),
-                "Q": float(x0 / FWHM) if FWHM > 0 else 0,
-                "T_peak": float(T_peak), "A": float(A), "gamma": float(gamma),
-                "offset": float(offset), "fit_r2": float(r2)}
-    except:
-        return None
-
-
-# ============================================================================
-# 峰提取
+# 峰提取（共用 spectrum_analysis，2D 更严 R²）
 # ============================================================================
 def extract_peaks(wl, T, bg_start, bg_end, delta_wl):
-    mask = (wl >= bg_start - 10) & (wl <= bg_end + 10)
-    wl_bg, T_bg = wl[mask], T[mask]
-    if len(wl_bg) < 20:
-        return []
-
-    peaks, props = find_peaks(T_bg, height=0.01, prominence=0.005,
-                               width=3, distance=3, rel_height=0.5)
-    if len(peaks) == 0:
-        return []
-
-    candidates = []
-    for k, idx in enumerate(peaks):
-        left = max(idx - 12, 0)
-        right = min(idx + 12, len(wl_bg) - 1)
-
-        fit = fit_peak(wl_bg[left:right+1], T_bg[left:right+1])
-        if fit is None:
-            continue
-
-        x0, FWHM, Q, T_pk, r2 = fit["lambda0_nm"], fit["FWHM_nm"], fit["Q"], fit["T_peak"], fit["fit_r2"]
-
-        prom = float(props["prominences"][k]) if k < len(props["prominences"]) else 0
-
-        valid = True; reasons = []
-        if x0 < 1500 or x0 > 1600: valid = False; reasons.append("lambda范围")
-        if x0 < bg_start or x0 > bg_end: valid = False; reasons.append("不在禁带")
-        if T_pk < 0.05: valid = False; reasons.append("T_peak<0.05")
-        if FWHM < 3 * delta_wl: valid = False; reasons.append("FWHM过窄")
-        if r2 < 0.95: valid = False; reasons.append(f"R²={r2:.3f}<0.95")
-
-        candidates.append({
-            "lambda0_nm": float(x0), "FWHM_nm": float(FWHM), "Q": float(Q),
-            "T_peak": float(T_pk), "prominence": float(prom),
-            "fit_r2": float(r2),
-            "distance_to_gap_edge_nm": float(min(abs(x0-bg_start), abs(x0-bg_end))),
-            "valid": valid, "invalid_reason": "; ".join(reasons) if reasons else "",
-        })
-    return candidates
+    peaks = _extract_peaks(
+        wl, T,
+        bandgap_start=bg_start,
+        bandgap_end=bg_end,
+        target_lambda=1550.0,
+        delta_wl=delta_wl,
+        min_r2=0.95,
+    )
+    for p in peaks:
+        p["distance_to_gap_edge_nm"] = float(
+            min(abs(p["lambda0_nm"] - bg_start), abs(p["lambda0_nm"] - bg_end))
+        )
+    return peaks
 
 
 def score_peak(peak):

@@ -1,10 +1,10 @@
 本项目使用 Meep + Python 优化一维光子晶体椭圆孔缺陷腔。
 
 当前环境：
-- WSL Ubuntu
-- conda 环境：phc-meep
+- WSL Ubuntu 或 Cursor Cloud（预装 phc-meep，见 .cursor/environment.json）
+- conda/micromamba 环境：phc-meep
 - 项目路径：~/projects/meep_optimizer
-- Meep 已安装，不要重新安装
+- Meep 已安装，不要重新安装（Cloud 上先 source scripts/cloud_env.sh）
 
 禁止：
 - 不要逐孔自由优化

@@ -85,3 +85,21 @@ tail -f cavity.log
 ```
 
 可用 GitHub Actions / Codespaces 远程触发（需自行配置）。
+
+## Cursor Cloud
+
+仓库已包含 Cloud Agent 环境配置（`.cursor/environment.json` + `.cursor/Dockerfile`），启动时会预装 `phc-meep`（Meep + 科学计算栈），并安装 **57 个项目 Skill**（`.cursor/skills/`，含 `optical-resonance-q`、文献调研、xlsx/pdf 等）。
+
+1. 将本仓库 push 到 GitHub
+2. 在 [Cursor Cloud Agents](https://cursor.com/dashboard) 中为该 repo 选择/确认 Development Environment（会自动读取 `.cursor/environment.json`）
+3. 从 main 或指定分支启动 Cloud Agent
+
+Agent 内运行：
+
+```bash
+source scripts/cloud_env.sh
+python run.py phase1-2
+# 或: bash scripts/run_cloud_pipeline.sh
+```
+
+详见 `AGENTS.md`。

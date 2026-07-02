@@ -1,0 +1,6 @@
+{
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "bash scripts/bootstrap_cloud.sh && bash scripts/bootstrap_skill_deps.sh"
+}

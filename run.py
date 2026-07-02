@@ -31,7 +31,7 @@ def main():
     parser = argparse.ArgumentParser(description="PHC optimizer pipeline")
     parser.add_argument(
         "command",
-        choices=["bandgap-3d", "cavity-2d", "cavity-3d", "all"],
+        choices=["bandgap-3d", "cavity-2d", "cavity-3d", "scan-ac", "all"],
         help="optimization stage to run",
     )
     args = parser.parse_args()
@@ -40,6 +40,7 @@ def main():
         "bandgap-3d": ["optimize_3d_ridge.py"],
         "cavity-2d": ["optimize_cavity_2d.py"],
         "cavity-3d": ["run_3d_cavity.py"],
+        "scan-ac": ["scan_cavity_ac.py"],
     }
 
     if args.command == "all":
