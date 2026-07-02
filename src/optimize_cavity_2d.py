@@ -723,7 +723,9 @@ if __name__ == "__main__":
     print("一维光子晶体二次渐变缺陷腔自动优化器 (2D)")
     print("=" * 70)
 
-    mc_path = "results/best_bandgap_params.json"
+    mc_path = "results_3d/best_bandgap_3d.json"
+    if not os.path.exists(mc_path):
+        mc_path = "results/best_bandgap_params.json"
     if not os.path.exists(mc_path):
         mc_path = "results_3d/optimized_params.json"
     mirror = load_mirror_candidate(mc_path)
