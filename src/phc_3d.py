@@ -185,7 +185,7 @@ def fit_cavity_peak(wl, transmission, bandgap=None):
     if wl_f.size < 20:
         return None
 
-    peaks, _ = find_peaks(t_f, height=0.02, prominence=0.01, width=2, distance=3)
+    peaks, _ = find_peaks(t_f, height=0.005, prominence=0.003, width=1, distance=2)
     if peaks.size == 0:
         return None
 

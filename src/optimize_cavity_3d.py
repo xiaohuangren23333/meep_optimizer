@@ -201,8 +201,8 @@ def build_phase1_grid(seeds, mirror):
     for seed in seeds:
         ac0 = seed["a_c"]
         nm0 = min(seed["N_mirror"], 18)
-        for nm in sorted({10, 14, nm0}):
-            for ac in np.round(np.linspace(ac0 - 0.015, ac0 + 0.015, 4), 4):
+        for nm in [16, 20, 24]:
+            for ac in np.round(np.linspace(ac0 - 0.02, ac0 + 0.01, 4), 4):
                 cavity = {
                     "a_c": float(ac),
                     "rx_c": seed["rx_c"],
@@ -284,11 +284,11 @@ def main():
     parser = argparse.ArgumentParser(description="3D defect cavity optimizer")
     parser.add_argument("--phase", default="1", choices=["1", "2", "refine"],
                         help="1=coarse grid, 2=refine best, refine=coarse+refine loop")
-    parser.add_argument("--nfreq", type=int, default=400)
+    parser.add_argument("--nfreq", type=int, default=500)
     parser.add_argument("--resolution", type=int, default=12)
-    parser.add_argument("--fixed-until", type=int, default=120,
-                        help="Fixed FDTD time steps for fast scan (0=use field decay)")
-    parser.add_argument("--max-runs", type=int, default=24)
+    parser.add_argument("--fixed-until", type=int, default=0,
+                        help="Fixed FDTD time for fast scan; 0=field decay (accurate)")
+    parser.add_argument("--max-runs", type=int, default=15)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
