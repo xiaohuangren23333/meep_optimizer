@@ -100,7 +100,7 @@ def build_ref_3d():
     ]
 
 
-def run_transmission(geom, cell, nfreq):
+def run_transmission(geom, cell, nfreq, resolution=resolution_3d):
     sx = cell.x
     src_x = -sx / 2 + dpml + 0.5
     mon_x = sx / 2 - dpml - 0.5
@@ -116,7 +116,7 @@ def run_transmission(geom, cell, nfreq):
     ]
     sim = mp.Simulation(
         cell_size=cell,
-        resolution=resolution_3d,
+        resolution=resolution,
         geometry=geom,
         sources=sources,
         boundary_layers=[mp.PML(dpml)],
@@ -226,14 +226,15 @@ def ensure_dirs():
 def main():
     parser = argparse.ArgumentParser(description="3D periodic bandgap verification scan")
     parser.add_argument("--best-2d", default=BEST_2D_PATH, help="Best 2D parameter JSON")
-    parser.add_argument("--a-span", type=float, default=0.01)
-    parser.add_argument("--rx-span", type=float, default=0.02)
-    parser.add_argument("--ry-span", type=float, default=0.03)
+    parser.add_argument("--a-span", type=float, default=0.015)
+    parser.add_argument("--rx-span", type=float, default=0.015)
+    parser.add_argument("--ry-span", type=float, default=0.02)
     parser.add_argument("--a-points", type=int, default=3)
     parser.add_argument("--rx-points", type=int, default=3)
     parser.add_argument("--ry-points", type=int, default=3)
     parser.add_argument("--n-delta", type=int, default=2)
-    parser.add_argument("--nfreq", type=int, default=nfreq_bandgap_3d)
+    parser.add_argument("--nfreq", type=int, default=400)
+    parser.add_argument("--resolution", type=int, default=resolution_3d)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -278,8 +279,8 @@ def main():
             print(f"[{idx:03d}/{len(params)}] {label}", end="", flush=True)
             t0 = time.time()
             geom, cell = build_geom_3d(a, rx, ry, n_period)
-            freqs_h, flux_h = run_transmission(geom, cell, args.nfreq)
-            freqs_r, flux_r = run_transmission(build_ref_3d(), cell, args.nfreq)
+            freqs_h, flux_h = run_transmission(geom, cell, args.nfreq, args.resolution)
+            freqs_r, flux_r = run_transmission(build_ref_3d(), cell, args.nfreq, args.resolution)
             tr = np.divide(flux_h, flux_r, out=np.zeros_like(flux_h), where=flux_r > 1e-15)
             freqs = freqs_r if freqs_r.size == flux_r.size else freqs_h
             wl_nm = 1000.0 / freqs
