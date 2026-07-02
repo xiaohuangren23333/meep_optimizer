@@ -12,6 +12,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 
+from config import min_feature_nm, check_cavity_geometry
+
 # ============================================================================
 # 结构参数
 # ============================================================================
@@ -176,6 +178,18 @@ if __name__ == "__main__":
     print(f"  缺陷: a_c={cavity['a_c']:.4f} rx_c={cavity['rx_c']:.3f} ry_c={cavity['ry_c']:.3f}")
     print(f"  N_taper={cavity['N_taper']} N_mirror={cavity['N_mirror']}")
     print(f"  2D 预测: Q={design['Q']:.0f} T_peak={design['T_peak']:.3f} λ₀={design['lambda0_nm']:.1f}nm")
+
+    ok, violations = check_cavity_geometry(
+        mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
+        cavity["a_c"], cavity["rx_c"], cavity["ry_c"],
+        cavity["N_taper"],
+    )
+    if not ok:
+        print(f"\n⚠️ 设计不满足最小特征尺寸 {min_feature_nm}nm:")
+        for v in violations:
+            print(f"   - {v}")
+        print("   建议先重新运行 bandgap-3d / cavity-2d 优化。")
+        sys.exit(1)
 
     # 构建几何
     geom, sx, sy, sz = build_cavity_3d(mirror, cavity)
