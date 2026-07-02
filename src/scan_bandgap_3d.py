@@ -123,7 +123,7 @@ def run_transmission(geom, cell, nfreq, resolution=resolution_3d):
     )
     fr = mp.FluxRegion(center=mon_point, size=mp.Vector3(0, 2 * w_wg, 2 * h_total))
     tr = sim.add_flux(fcen, df, nfreq, fr)
-    sim.run(until_after_sources=mp.stop_when_fields_decayed(50, mp.Ey, mon_point, 1e-4))
+    sim.run(until_after_sources=mp.stop_when_fields_decayed(30, mp.Ey, mon_point, 1e-3))
     freqs = np.array(mp.get_flux_freqs(tr))
     flux = np.array(mp.get_fluxes(tr))
     sim.reset_meep()
