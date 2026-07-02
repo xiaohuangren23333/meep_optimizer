@@ -27,6 +27,7 @@ from config import (
     h_total,
     lambda_max,
     lambda_min,
+    min_feature_nm,
     n_air,
     n_sub,
     n_wg,
@@ -34,6 +35,7 @@ from config import (
     pad,
     resolution_3d,
     w_wg,
+    check_periodic_geometry,
 )
 
 RESULTS_DIR = "results_3d"
@@ -205,6 +207,16 @@ def build_scan_space(seed, args):
     return list(itertools.product(a_vals, rx_vals, ry_vals, n_vals))
 
 
+def filter_valid_params(params):
+    """Keep only 3D scan points that satisfy the minimum feature size rule."""
+    valid = []
+    for a, rx, ry, n_period in params:
+        ok, _ = check_periodic_geometry(a, rx, ry, w_wg=w_wg)
+        if ok:
+            valid.append((a, rx, ry, n_period))
+    return valid
+
+
 def ensure_dirs():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(SPECTRA_DIR, exist_ok=True)
@@ -227,9 +239,9 @@ def main():
 
     ensure_dirs()
     seed = load_best_2d(args.best_2d)
-    params = build_scan_space(seed, args)
+    params = filter_valid_params(build_scan_space(seed, args))
     print(f"Seed from 2D best: a={seed['a']:.4f}, rx={seed['rx']:.4f}, ry={seed['ry']:.4f}, N={seed['N']}")
-    print(f"3D scan points: {len(params)}")
+    print(f"3D scan points: {len(params)} (filtered for >= {min_feature_nm}nm features)")
     if args.dry_run:
         for item in params[:20]:
             print(f"  a={item[0]:.4f}, rx={item[1]:.4f}, ry={item[2]:.4f}, N={item[3]}")
@@ -259,6 +271,10 @@ def main():
         writer.writeheader()
         for idx, (a, rx, ry, n_period) in enumerate(params, 1):
             label = f"a{a:.4f}_rx{rx:.4f}_ry{ry:.4f}_N{n_period}"
+            ok, violations = check_periodic_geometry(a, rx, ry, w_wg=w_wg)
+            if not ok:
+                print(f"[{idx:03d}/{len(params)}] ⛔ SKIP {label} | {', '.join(violations)}")
+                continue
             print(f"[{idx:03d}/{len(params)}] {label}", end="", flush=True)
             t0 = time.time()
             geom, cell = build_geom_3d(a, rx, ry, n_period)

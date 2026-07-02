@@ -282,16 +282,20 @@ def score_peak(peak):
     s = 0
     dl = abs(peak["lambda0_nm"] - 1550)
     if dl > 40:
-        s -= 80
+        s -= 120
     elif dl > 20:
-        s -= 30
+        s -= 50
+    elif dl > 10:
+        s -= 15
     else:
-        s += max(0, 40 - dl * 2)
+        s += max(0, 60 - dl * 4)
     if peak["Q"] >= 1000:
-        s += 100
-    s += min(peak["Q"] / 100, 50)
-    s += min(peak["T_peak"] * 30, 30)
-    s += peak["fit_r2"] * 10
+        s += 200
+    elif peak["Q"] >= 500:
+        s += 80
+    s += min(peak["Q"] / 50, 80)
+    s += min(peak["T_peak"] * 40, 40)
+    s += peak["fit_r2"] * 15
     return s
 
 
@@ -622,7 +626,7 @@ def optimize(mirror):
     print(f"Step 6: 扫描 N_mirror (增加镜区孔数)")
     print(f"{'='*60}")
     best_Nm = base_nm
-    for Nm in [10, 12, 15, 18, 20, 22]:
+    for Nm in [10, 14, 18, 22, 26, 30, 34]:
         run_id += 1
         row = evaluate(run_id, best_ac, best_rx_c, best_ry_c, Nt=best_Nt, Nm=Nm, mirror=mirror)
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
@@ -636,7 +640,7 @@ def optimize(mirror):
     print(f"Step 7: 精细扫描 a_c 对准 1550 nm (Nm={best_Nm})")
     print(f"{'='*60}")
     fine_ac = filter_cavity_scan_values(
-        np.round(np.linspace(best_ac - 0.03, best_ac + 0.03, 13), 4),
+        np.round(np.linspace(best_ac - 0.04, best_ac + 0.04, 17), 4),
         mirror, "a_c", best_ac, best_rx_c, best_ry_c, best_Nt,
     )
     for a_c in fine_ac:
@@ -645,6 +649,43 @@ def optimize(mirror):
         if best_overall is None or row["best_peak_score"] > best_overall[1]:
             best_overall = (row, row["best_peak_score"])
             best_ac = a_c
+
+    # ================================================================
+    # Step 8: 高 Q 搜索 — 增加镜区 + 超精细 a_c
+    # ================================================================
+    print(f"\n{'='*60}")
+    print(f"Step 8: 高 Q 搜索 (Nm={best_Nm}, 目标 Q>=1000, λ≈1550nm)")
+    print(f"{'='*60}")
+    if best_overall:
+        best_ac = best_overall[0]["a_c"]
+        best_rx_c = best_overall[0]["rx_c"]
+        best_ry_c = best_overall[0]["ry_c"]
+        best_Nt = best_overall[0]["N_taper"]
+        best_Nm = best_overall[0]["N_mirror"]
+
+    for Nm in range(max(best_Nm, 24), 41, 2):
+        run_id += 1
+        row = evaluate(run_id, best_ac, best_rx_c, best_ry_c, Nt=best_Nt, Nm=Nm, mirror=mirror)
+        if best_overall is None or row["best_peak_score"] > best_overall[1]:
+            best_overall = (row, row["best_peak_score"])
+            best_Nm = Nm
+        if float(row.get("Q", 0) or 0) >= 1000 and abs(float(row.get("lambda0_nm", 0) or 0) - 1550) <= 15:
+            print(f"  🎯 达标: Q={row['Q']:.0f} λ={row['lambda0_nm']:.1f}nm")
+            break
+
+    ultra_ac = filter_cavity_scan_values(
+        np.round(np.linspace(best_ac - 0.015, best_ac + 0.015, 13), 4),
+        mirror, "a_c", best_ac, best_rx_c, best_ry_c, best_Nt,
+    )
+    for a_c in ultra_ac:
+        run_id += 1
+        row = evaluate(run_id, a_c, best_rx_c, best_ry_c, Nt=best_Nt, Nm=best_Nm, mirror=mirror)
+        if best_overall is None or row["best_peak_score"] > best_overall[1]:
+            best_overall = (row, row["best_peak_score"])
+            best_ac = a_c
+        if float(row.get("Q", 0) or 0) >= 1000 and abs(float(row.get("lambda0_nm", 0) or 0) - 1550) <= 10:
+            print(f"  🎯 达标: Q={row['Q']:.0f} λ={row['lambda0_nm']:.1f}nm")
+            break
 
     # ================================================================
     # 输出最佳结果
@@ -736,7 +777,8 @@ if __name__ == "__main__":
     print(f"最小特征尺寸限制: {min_feature_nm}nm")
     if not mirror.get("geometry_valid", True):
         print(f"⚠️ 镜区参数不满足最小尺寸约束: {', '.join(mirror.get('geometry_violations', []))}")
-        print("   请先重新运行 bandgap-3d 或更新 best_bandgap_params.json")
+        print("   请先重新运行 bandgap-2d / bandgap-3d 或更新 best_bandgap_params.json")
+        sys.exit(1)
     print()
 
     results = optimize(mirror)
