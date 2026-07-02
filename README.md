@@ -23,13 +23,16 @@ cd ~/projects/meep_optimizer
 ## 快速开始
 
 ```bash
-# 1. 3D 禁带优化（坐标下降，约数小时）
+# 1. 2D 禁带扫描（先筛宽禁带 + 低透射）
+python run.py bandgap-2d
+
+# 2. 3D 禁带验证扫描（基于 2D 最优参数）
 python run.py bandgap-3d
 
-# 2. 2D 缺陷腔优化（6 步扫描，约数小时）
+# 3. 2D 缺陷腔优化（6 步扫描，约数小时）
 python run.py cavity-2d
 
-# 3. 3D 缺陷腔验证
+# 4. 3D 缺陷腔验证
 python run.py cavity-3d
 
 # 或一键全流程
@@ -69,7 +72,7 @@ meep_optimizer/
 
 ## 规范要点
 
-- 必须使用 GaussianSource + 无孔参考仿真归一化
+- 必须使用宽带源 + 无孔参考仿真归一化（参考 Meep 官方教程流程）
 - 禁止逐孔自由优化
 - 2D 结果不代表真实 3D 器件，需 3D 验证
 
