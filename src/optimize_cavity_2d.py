@@ -299,6 +299,53 @@ def score_peak(peak):
     return s
 
 
+def select_design_candidates(all_rows):
+    """Pick balanced, high-Q, and target-meeting designs from optimization rows."""
+    if not all_rows:
+        return None, None, None
+
+    def lam_delta(r):
+        return abs(float(r.get("lambda0_nm", 0) or 0) - 1550)
+
+    by_score = sorted(all_rows, key=lambda x: (
+        -float(x.get("best_peak_score", -100) or -100),
+        -float(x.get("Q", 0) or 0),
+        -float(x.get("T_peak", 0) or 0),
+    ))
+    by_q_near_1550 = sorted(
+        [r for r in all_rows if lam_delta(r) <= 35],
+        key=lambda x: (-float(x.get("Q", 0) or 0), lam_delta(x), -float(x.get("T_peak", 0) or 0)),
+    )
+    by_q = sorted(all_rows, key=lambda x: (-float(x.get("Q", 0) or 0), lam_delta(x)))
+
+    target_hit = None
+    for r in by_q_near_1550 or by_q:
+        q = float(r.get("Q", 0) or 0)
+        lam = float(r.get("lambda0_nm", 0) or 0)
+        tp = float(r.get("T_peak", 0) or 0)
+        if q >= 1000 and abs(lam - 1550) <= 20 and tp >= 0.5:
+            target_hit = r
+            break
+
+    return target_hit or (by_q_near_1550[0] if by_q_near_1550 else by_q[0]), by_q[0], by_score[0]
+
+
+def row_to_design(row):
+    return {
+        "a_m": float(row["a_m"]), "rx_m": float(row["rx_m"]), "ry_m": float(row["ry_m"]),
+        "a_c": float(row["a_c"]), "rx_c": float(row["rx_c"]), "ry_c": float(row["ry_c"]),
+        "N_taper": int(row["N_taper"]), "N_mirror": int(row["N_mirror"]),
+        "defect_gap": int(row.get("defect_gap", 0)),
+        "N_total": int(row["N_total"]),
+        "lambda0_nm": float(row["lambda0_nm"]),
+        "FWHM_nm": float(row["FWHM_nm"]),
+        "Q": float(row["Q"]),
+        "T_peak": float(row["T_peak"]),
+        "fit_r2": float(row["fit_r2"]),
+        "best_peak_score": float(row.get("best_peak_score", 0) or 0),
+    }
+
+
 # ============================================================================
 # 保存
 # ============================================================================
@@ -687,11 +734,21 @@ def optimize(mirror):
             print(f"  🎯 达标: Q={row['Q']:.0f} λ={row['lambda0_nm']:.1f}nm")
             break
 
+    # Re-read rows for refinement seed
+    import csv
+    all_rows = []
+    with open("results/cavity_optimization_all.csv") as f:
+        for r in csv.DictReader(f):
+            if float(r.get("Q", 0) or 0) > 0 and float(r.get("fit_r2", 0) or 0) > 0.95:
+                all_rows.append(r)
+    _, best_q_row, _ = select_design_candidates(all_rows)
+    if best_q_row and float(best_q_row.get("Q", 0) or 0) < 1000:
+        refine_high_q(mirror, best_q_row, run_id)
+
     # ================================================================
     # 输出最佳结果
     # ================================================================
     # 从 CSV 读取所有结果
-    import csv
     all_rows = []
     with open("results/cavity_optimization_all.csv") as f:
         reader = csv.DictReader(f)
@@ -737,23 +794,50 @@ def optimize(mirror):
 
     # 保存 best JSON
     if all_rows:
-        best = all_rows[0]
-        design = {
-            "a_m": float(best["a_m"]), "rx_m": float(best["rx_m"]), "ry_m": float(best["ry_m"]),
-            "a_c": float(best["a_c"]), "rx_c": float(best["rx_c"]), "ry_c": float(best["ry_c"]),
-            "N_taper": int(best["N_taper"]), "N_mirror": int(best["N_mirror"]),
-            "defect_gap": int(best.get("defect_gap", 0)),
-            "N_total": int(best["N_total"]),
-            "lambda0_nm": float(best["lambda0_nm"]),
-            "FWHM_nm": float(best["FWHM_nm"]),
-            "Q": float(best["Q"]),
-            "T_peak": float(best["T_peak"]),
-            "fit_r2": float(best["fit_r2"]),
-        }
+        best_target, best_q, best_score = select_design_candidates(all_rows)
+        best = best_target
+        design = row_to_design(best)
         with open("results/best_cavity_design.json", "w") as f:
             json.dump(design, f, indent=2)
+        with open("results/best_cavity_design_highQ.json", "w") as f:
+            json.dump(row_to_design(best_q), f, indent=2)
+        with open("results/best_cavity_design_balanced.json", "w") as f:
+            json.dump(row_to_design(best_score), f, indent=2)
 
     return all_rows
+
+
+def refine_high_q(mirror, seed_row, run_id_start=0):
+    """Fine-tune high-Q designs toward Q>=1000 and lambda~1550 nm."""
+    print(f"\n{'='*60}")
+    print("Step 9: 高 Q 精细调谐 (围绕当前最高 Q 设计)")
+    print(f"{'='*60}")
+    ac0 = float(seed_row["a_c"])
+    rxc = float(seed_row["rx_c"])
+    ryc = float(seed_row["ry_c"])
+    nt = int(seed_row["N_taper"])
+    nm0 = int(seed_row["N_mirror"])
+    run_id = run_id_start
+    best_overall = (seed_row, float(seed_row.get("best_peak_score", -100) or -100))
+
+    for nm in range(max(nm0 - 2, 28), 49, 2):
+        ac_vals = filter_cavity_scan_values(
+            np.round(np.linspace(ac0 - 0.03, ac0 + 0.01, 13), 4),
+            mirror, "a_c", ac0, rxc, ryc, nt,
+        )
+        for a_c in ac_vals:
+            run_id += 1
+            row = evaluate(run_id, a_c, rxc, ryc, Nt=nt, Nm=nm, mirror=mirror)
+            q = float(row.get("Q", 0) or 0)
+            lam = float(row.get("lambda0_nm", 0) or 0)
+            if row["best_peak_score"] > best_overall[1]:
+                best_overall = (row, row["best_peak_score"])
+            if q >= 1000 and abs(lam - 1550) <= 20:
+                print(f"  🎯 达标: Q={q:.0f} λ={lam:.1f}nm T={row['T_peak']:.3f} Nm={nm}")
+                return row, run_id
+            if q >= 950 and abs(lam - 1550) <= 25:
+                print(f"  ★ 接近目标: Q={q:.0f} λ={lam:.1f}nm")
+    return best_overall[0], run_id
 
 
 # ============================================================================
