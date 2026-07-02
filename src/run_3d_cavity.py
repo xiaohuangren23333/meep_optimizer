@@ -187,8 +187,8 @@ if __name__ == "__main__":
     freqs_h, flux_h = run_sim(geom, sx, sy, sz)
     print(f" {time.time()-t0:.1f}s")
 
-    # 参考波导 (无孔)
-    ref_sx = 2*dpml + 4.0 + 2*pad  # 短区域
+    # 参考波导 (无孔): 使用完全相同 cell，避免归一化偏差
+    ref_sx = sx
     ref_geom = build_ref_geom()
     t0 = time.time()
     print(f"运行 3D 参考波导...", end="", flush=True)

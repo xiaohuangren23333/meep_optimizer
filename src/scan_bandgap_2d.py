@@ -46,6 +46,7 @@ os.makedirs(FIGURES_DIR, exist_ok=True)
 
 RESULTS_CSV = f"{RESULTS_DIR}/bandgap_2d_scan.csv"
 CANDIDATES_JSON = f"{RESULTS_DIR}/bandgap_candidates_2d.json"
+BEST_2D_JSON = f"{RESULTS_DIR}/best_bandgap_2d.json"
 
 # ============================================================================
 # 几何构建 (2D)
@@ -147,6 +148,17 @@ def analyze_bandgap(wl, T):
                     "T_min_gap": gt, "gap_start": gs, "gap_end": ge,
                     "threshold": th, "has_gap": True}
     return best
+
+
+def candidate_score(row):
+    """Score favors wide gap and low in-gap transmission."""
+    if not row.get("has_gap"):
+        return -1e9
+    gap_nm = float(row.get("gap_nm", 0.0))
+    t_gap = float(row.get("T_min_gap", 1.0))
+    # Wider stopband is better; lower transmission is better.
+    # The transmission term mirrors Meep tutorial logic: prioritize deep bandgaps.
+    return gap_nm * 2.0 - 180.0 * t_gap
 
 
 # ============================================================================
@@ -340,22 +352,19 @@ def main():
 
     # 分析结果
     if results:
-        # 有禁带的 (gap > 10nm)
+        # 有禁带的 (gap > 10nm), 按“宽禁带 + 低透射”综合评分排序
         valid = [r for r in results if r.get("has_gap") and r.get("gap_nm", 0) > 10]
-        # 按 T_min_gap 排序
-        valid.sort(key=lambda r: r.get("T_min_gap", 999))
+        valid.sort(key=candidate_score, reverse=True)
 
         print(f"\n有禁带 (>10nm): {len(valid)}/{len(results)}")
         if valid:
-            print(f"\n🏆 Top 20 禁带候选:")
-            print(f"{'#':>3} {'a':>5} {'rx':>5} {'ry':>5} {'N':>3} {'gap_nm':>7} {'T_min':>7} {'T_max':>7}")
-            print("-" * 50)
+            print(f"\n🏆 Top 20 禁带候选 (宽禁带 + 低透射):")
+            print(f"{'#':>3} {'a':>5} {'rx':>5} {'ry':>5} {'N':>3} {'gap_nm':>7} {'T_min':>7} {'score':>8}")
+            print("-" * 58)
             for i, r in enumerate(valid[:20]):
-                tmax = r.get("T_max", 1)
-                tmax_flag = "✅" if tmax <= 1.05 else "⚠️"
-                score = "🏆" if r["T_min_gap"] < 0.05 else ("⭐" if r["T_min_gap"] < 0.1 else "👍" if r["T_min_gap"] < 0.3 else "")
+                badge = "🏆" if r["T_min_gap"] < 0.05 else ("⭐" if r["T_min_gap"] < 0.1 else "👍" if r["T_min_gap"] < 0.3 else "")
                 print(f"{i+1:>3} {r['a']:.3f} {r['rx']:.3f} {r['ry']:.3f} {r['N']:>3} "
-                      f"{r['gap_nm']:>5.0f}nm {r['T_min_gap']:>7.4f} {tmax:.4f}{tmax_flag} {score}")
+                      f"{r['gap_nm']:>5.0f}nm {r['T_min_gap']:>7.4f} {candidate_score(r):>8.2f} {badge}")
 
         # 保存候选
         candidates = []
@@ -379,6 +388,24 @@ def main():
         with open(CANDIDATES_JSON, "w") as f:
             json.dump({"top_bandgap": candidates, "deep_Tmin": deep_candidates}, f, indent=2)
         print(f"\n📁 候选: {CANDIDATES_JSON}")
+
+        if valid:
+            best = valid[0]
+            best_payload = {
+                "a": best["a"],
+                "rx": best["rx"],
+                "ry": best["ry"],
+                "N": best["N"],
+                "gap_width_nm": best["gap_nm"],
+                "T_min_gap": best["T_min_gap"],
+                "T_max": best["T_max"],
+                "selection_score": candidate_score(best),
+                "selection_rule": "maximize (2*gap_nm - 180*T_min_gap) with gap_nm>10 and has_gap=True",
+                "source_csv": RESULTS_CSV,
+            }
+            with open(BEST_2D_JSON, "w") as f:
+                json.dump(best_payload, f, indent=2)
+            print(f"📌 2D 最优参数: {BEST_2D_JSON}")
 
         # 检查 T_max
         maxT = max(r.get("T_max", 1) for r in results)
