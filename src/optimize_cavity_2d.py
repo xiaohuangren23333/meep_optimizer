@@ -23,14 +23,17 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 
+from config import (
+    n_wg, w_wg, min_feature_nm,
+    check_cavity_geometry, check_periodic_geometry,
+)
+
 warnings.filterwarnings('ignore')
 
 # ============================================================================
 # 常量
 # ============================================================================
-n_wg = 2.18
 n_air = 1.0
-w_wg = 1.5
 resolution = 30
 dpml = 1.0
 pad = 2.0
@@ -55,13 +58,13 @@ def load_mirror_candidate(path=None):
             raw = json.load(f)
     else:
         raw = {
-            "a": 0.440, "rx": 0.120, "ry": 0.220, "N_period": 20,
+            "a": 0.640, "rx": 0.200, "ry": 0.220, "N_period": 20,
             "gap_start_nm": 1529.0, "gap_end_nm": 1589.0,
             "gap_width_nm": 60.0, "T_min": 0.017, "T_avg": 0.5,
         }
 
     # 映射各种可能的键名 → 统一字段
-    return {
+    mirror = {
         "a_m": raw.get("a_m") or raw.get("a") or raw.get("a_m"),
         "rx_m": raw.get("rx_m") or raw.get("rx") or raw.get("rx_m"),
         "ry_m": raw.get("ry_m") or raw.get("ry") or raw.get("ry_m"),
@@ -72,6 +75,12 @@ def load_mirror_candidate(path=None):
         "T_min_1500_1600": raw.get("T_min_1500_1600") or raw.get("T_min", 0.017),
         "T_avg_1500_1600": raw.get("T_avg_1500_1600") or raw.get("T_avg", 0.5),
     }
+    ok, violations = check_periodic_geometry(
+        mirror["a_m"], mirror["rx_m"], mirror["ry_m"], w_wg=w_wg
+    )
+    mirror["geometry_valid"] = ok
+    mirror["geometry_violations"] = violations
+    return mirror
 
 
 # ============================================================================
@@ -402,12 +411,55 @@ def append_csv_row(row, fpath="results/cavity_optimization_all.csv"):
         )
 
 
+def invalid_geometry_row(run_id, mirror, a_c, rx_c, ry_c, Nt, Nm, reason):
+    """Return a skipped row for designs that violate minimum feature size."""
+    return {
+        "run_id": run_id, "source_mirror_candidate_id": "default",
+        "a_m": mirror["a_m"], "rx_m": mirror["rx_m"], "ry_m": mirror["ry_m"],
+        "a_c": a_c, "rx_c": rx_c, "ry_c": ry_c,
+        "N_taper": Nt, "N_mirror": Nm, "defect_gap": 0, "N_total": 2*(Nm+Nt),
+        "valid_geometry": 0,
+        "lambda0_nm": 0, "FWHM_nm": 0, "Q": 0, "T_peak": 0,
+        "prominence": 0, "fit_r2": 0,
+        "best_peak_score": -100, "highest_q_peak_Q": 0,
+        "spectrum_csv": "", "spectrum_png": "", "fit_png": "",
+        "error_message": reason,
+    }
+
+
+def filter_cavity_scan_values(values, mirror, param, best_ac, best_rx_c, best_ry_c, Nt):
+    """Keep cavity scan values that satisfy the 200nm minimum feature constraint."""
+    filtered = []
+    for val in values:
+        ac = val if param == "a_c" else best_ac
+        rxc = val if param == "rx_c" else best_rx_c
+        ryc = val if param == "ry_c" else best_ry_c
+        ok, _ = check_cavity_geometry(
+            mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
+            ac, rxc, ryc, Nt, w_wg=w_wg,
+        )
+        if ok:
+            filtered.append(val)
+    return filtered
+
+
 # ============================================================================
 # 单次评估
 # ============================================================================
 def evaluate(run_id, a_c, rx_c, ry_c, Nt, Nm, mirror):
     """运行一次仿真 + 分析 + 保存，返回 row"""
     print(f"[{run_id}] a_c={a_c:.3f} rx_c={rx_c:.3f} ry_c={ry_c:.3f} Nt={Nt} Nm={Nm}", end="", flush=True)
+    ok, violations = check_cavity_geometry(
+        mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
+        a_c, rx_c, ry_c, Nt, w_wg=w_wg,
+    )
+    if not ok:
+        reason = f"min feature {min_feature_nm}nm: {', '.join(violations)}"
+        print(f" ⛔ SKIP | {reason}")
+        row = invalid_geometry_row(run_id, mirror, a_c, rx_c, ry_c, Nt, Nm, reason)
+        append_csv_row(row)
+        return row
+
     t0 = time.time()
     try:
         geom, sx = build_cavity_geom(mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
@@ -418,6 +470,7 @@ def evaluate(run_id, a_c, rx_c, ry_c, Nt, Nm, mirror):
         peaks = extract_peaks(wl, T, mirror["bandgap_start_nm"],
                               mirror["bandgap_end_nm"], delta_wl)
         row = save_run(wl, T, run_id, (a_c, rx_c, ry_c, Nt, Nm), peaks, mirror, elapsed)
+        row["valid_geometry"] = 1
         bp = max([p for p in peaks if p["valid"]], key=score_peak) if any(p["valid"] for p in peaks) else None
         if bp:
             print(f" | Q={bp['Q']:.0f} T={bp['T_peak']:.2f} λ={bp['lambda0_nm']:.1f} R²={bp['fit_r2']:.3f}")
@@ -468,7 +521,10 @@ def optimize(mirror):
     print(f"\n{'='*60}")
     print(f"Step 1: 扫描 a_c (固定 Nt=3 Nm={base_nm} rx_c=rx_m ry_c=ry_m)")
     print(f"{'='*60}")
-    a_c_vals = np.round(np.linspace(0.80*a_m, 1.10*a_m, 13), 4)
+    a_c_vals = filter_cavity_scan_values(
+        np.round(np.linspace(0.80*a_m, 1.10*a_m, 13), 4),
+        mirror, "a_c", a_m, rx_m, ry_m, 3,
+    )
     step1_best = None
     for a_c in a_c_vals:
         run_id += 1
@@ -486,7 +542,10 @@ def optimize(mirror):
     print(f"\n{'='*60}")
     print(f"Step 2: 扫描 rx_c (固定 a_c={best_ac:.3f} Nt=3 Nm={base_nm} ry_c=ry_m)")
     print(f"{'='*60}")
-    rx_c_vals = np.round(np.linspace(0.70*rx_m, 1.20*rx_m, 7), 4)
+    rx_c_vals = filter_cavity_scan_values(
+        np.round(np.linspace(0.70*rx_m, 1.20*rx_m, 7), 4),
+        mirror, "rx_c", best_ac, rx_m, ry_m, 3,
+    )
     step2_best = None
     for rx_c in rx_c_vals:
         run_id += 1
@@ -504,7 +563,10 @@ def optimize(mirror):
     print(f"\n{'='*60}")
     print(f"Step 3: 扫描 ry_c (固定 a_c={best_ac:.3f} rx_c={best_rx_c:.3f} Nt=3 Nm={base_nm})")
     print(f"{'='*60}")
-    ry_c_vals = np.round(np.linspace(0.70*ry_m, 1.20*ry_m, 7), 4)
+    ry_c_vals = filter_cavity_scan_values(
+        np.round(np.linspace(0.70*ry_m, 1.20*ry_m, 7), 4),
+        mirror, "ry_c", best_ac, best_rx_c, ry_m, 3,
+    )
     step3_best = None
     for ry_c in ry_c_vals:
         run_id += 1
@@ -526,6 +588,7 @@ def optimize(mirror):
         for param, vals in [("a_c", np.round(np.linspace(best_ac-2*a_step, best_ac+2*a_step, 5), 4)),
                             ("rx_c", np.round(np.linspace(best_rx_c-2*a_step, best_rx_c+2*a_step, 5), 4)),
                             ("ry_c", np.round(np.linspace(best_ry_c-2*a_step, best_ry_c+2*a_step, 5), 4))]:
+            vals = filter_cavity_scan_values(vals, mirror, param, best_ac, best_rx_c, best_ry_c, 3)
             for val in vals:
                 ac = val if param == "a_c" else best_ac
                 rxc = val if param == "rx_c" else best_rx_c
@@ -572,7 +635,10 @@ def optimize(mirror):
     print(f"\n{'='*60}")
     print(f"Step 7: 精细扫描 a_c 对准 1550 nm (Nm={best_Nm})")
     print(f"{'='*60}")
-    fine_ac = np.round(np.linspace(best_ac - 0.03, best_ac + 0.03, 13), 4)
+    fine_ac = filter_cavity_scan_values(
+        np.round(np.linspace(best_ac - 0.03, best_ac + 0.03, 13), 4),
+        mirror, "a_c", best_ac, best_rx_c, best_ry_c, best_Nt,
+    )
     for a_c in fine_ac:
         run_id += 1
         row = evaluate(run_id, a_c, best_rx_c, best_ry_c, Nt=best_Nt, Nm=best_Nm, mirror=mirror)
@@ -665,6 +731,10 @@ if __name__ == "__main__":
           f"ry_m={mirror['ry_m']:.3f}")
     print(f"禁带: {mirror.get('bandgap_start_nm',1529):.0f}-"
           f"{mirror.get('bandgap_end_nm',1589):.0f}nm")
+    print(f"最小特征尺寸限制: {min_feature_nm}nm")
+    if not mirror.get("geometry_valid", True):
+        print(f"⚠️ 镜区参数不满足最小尺寸约束: {', '.join(mirror.get('geometry_violations', []))}")
+        print("   请先重新运行 bandgap-3d 或更新 best_bandgap_params.json")
     print()
 
     results = optimize(mirror)

@@ -23,16 +23,10 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# ============================================================================
-# 固定结构参数
-# ============================================================================
-n_wg   = 2.18
-n_air  = 1.0
-n_sub  = 1.44
-w_wg   = 1.5
-h_slab = 0.2
-h_ridge = 0.2
-h_total = 0.4
+from config import (
+    n_wg, n_air, n_sub, w_wg, h_slab, h_ridge, h_total,
+    min_feature_nm, check_periodic_geometry,
+)
 
 lambda_min = 1.25
 lambda_max = 1.75
@@ -199,6 +193,12 @@ def coordinate_descent(start_params, scan_ranges, fixed_N=20,
     iteration = 0
     param_order = ["a", "ry", "rx"]
 
+    ok, violations = check_periodic_geometry(
+        best["a"], best["rx"], best["ry"], w_wg=w_wg
+    )
+    if not ok:
+        print(f"⚠️ 起始参数不满足最小特征尺寸 {min_feature_nm}nm: {', '.join(violations)}")
+
     with open(log_file, "w") as f:
         f.write("iteration,param,a,rx,ry,N,T_min,T_avg,gap_start,gap_end,gap_width,center,score,penalty\n")
 
@@ -222,6 +222,12 @@ def coordinate_descent(start_params, scan_ranges, fixed_N=20,
                 params = dict(best)
                 params[param] = val
                 a, rx, ry, N = params["a"], params["rx"], params["ry"], params["N"]
+                ok, violations = check_periodic_geometry(a, rx, ry, w_wg=w_wg)
+                if not ok:
+                    print(f"\n  ⛔ SKIP a={a:.3f} rx={rx:.3f} ry={ry:.3f} | "
+                          f"min feature {min_feature_nm}nm: {', '.join(violations)}")
+                    continue
+
                 label = f"opt_i{iteration}_{param}{val:.3f}"
 
                 print(f"\n  ▶ a={a:.3f} rx={rx:.3f} ry={ry:.3f} N={N}", end="", flush=True)
@@ -317,15 +323,16 @@ if __name__ == "__main__":
     print("3D 正确脊型波导自动优化器")
     print("=" * 70)
 
-    start = {"a": 0.440, "rx": 0.120, "ry": 0.220}
+    start = {"a": 0.640, "rx": 0.200, "ry": 0.220}
 
     scan_ranges = {
-        "a":  [0.430, 0.434, 0.438, 0.442, 0.446, 0.450],
-        "rx": [0.100, 0.110, 0.120, 0.130, 0.140],
+        "a":  [0.600, 0.620, 0.640, 0.660, 0.680, 0.700],
+        "rx": [0.200, 0.210, 0.220],
         "ry": [0.200, 0.210, 0.220, 0.230, 0.240],
     }
 
     print(f"\n📌 起始点: a={start['a']} rx={start['rx']} ry={start['ry']} N=20")
+    print(f"   最小特征尺寸限制: {min_feature_nm}nm")
     print("   (c1_ridge, 已知 3D 禁带 31nm @1549nm)")
     print()
 

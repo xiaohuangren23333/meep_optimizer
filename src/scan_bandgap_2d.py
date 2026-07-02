@@ -23,11 +23,12 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import traceback
 
+from config import min_feature_nm, min_feature_um, w_wg, check_periodic_geometry
+
 # ============================================================================
 # 物理参数 (同3D)
 # ============================================================================
 n_wg = 2.18; n_clad = 1.0
-w_wg = 1.5                     # 波导宽度 (um)
 
 lambda_min = 1.25; lambda_max = 1.75
 fcen = 1.0 / 1.50
@@ -185,6 +186,11 @@ def run_parameter(a, rx, ry, N, run_id, total, plot_gap_only=True):
     csv_path = f"{SPECTRA_DIR}/2d_{label}.csv"
     png_path = f"{FIGURES_DIR}/2d_{label}.png"
 
+    ok, violations = check_periodic_geometry(a, rx, ry, w_wg=w_wg)
+    if not ok:
+        print(f"[{run_id:02d}/{total}] ⛔ SKIP {label} | min feature {min_feature_nm}nm: {', '.join(violations)}")
+        return None
+
     # 断点续传
     if os.path.isfile(csv_path):
         # 读已有结果
@@ -259,35 +265,40 @@ def main():
     if args.phase == 0:
         # Phase 0: 快速验证 (10组)
         params = []
-        for rx in [0.10, 0.14, 0.18]:
+        for rx in [0.20, 0.21, 0.22]:
             for ry in [0.20, 0.30, 0.40]:
-                params.append((0.44, rx, ry, 16))
+                params.append((0.64, rx, ry, 16))
         params = params[:10]  # 最多10组
 
     elif args.phase == 1:
-        # Phase 1: 大规模粗扫
-        # a: 周期
-        a_vals = np.round(np.arange(0.36, 0.52, 0.02), 3)  # 0.36, 0.38, ..., 0.50
-        # rx: 椭圆 x 半轴 (0.08 ~ 0.22)
-        rx_vals = np.round(np.arange(0.08, 0.24, 0.02), 3)  # 0.08, 0.10, ..., 0.22
-        # ry: 椭圆 y 半轴 (0.15 ~ 0.45)
-        ry_vals = np.round(np.arange(0.15, 0.47, 0.04), 3)  # 0.15, 0.19, ..., 0.43
-        # N: 孔数
+        # Phase 1: 大规模粗扫 (最小特征尺寸 >= 200nm)
+        # a 需满足 a >= 2*rx + 200nm，故 a 从 0.60 μm 起扫
+        a_vals = np.round(np.arange(0.60, 0.78, 0.02), 3)
+        rx_vals = np.round(np.arange(0.20, 0.26, 0.02), 3)
+        ry_vals = np.round(np.arange(0.20, 0.47, 0.04), 3)
         N_vals = [12, 16, 20]
 
-        params = list(itertools.product(a_vals, rx_vals, ry_vals, N_vals))
-        print(f"Phase 1: {len(a_vals)}a × {len(rx_vals)}rx × {len(ry_vals)}ry × {len(N_vals)}N = {len(params)} 组")
+        params = [
+            (a, rx, ry, N)
+            for a, rx, ry, N in itertools.product(a_vals, rx_vals, ry_vals, N_vals)
+            if check_periodic_geometry(a, rx, ry, w_wg=w_wg)[0]
+        ]
+        print(f"Phase 1: 有效组合 {len(params)} 组 (已过滤 <{min_feature_nm}nm 特征)")
+        print(f"最小特征尺寸限制: {min_feature_nm}nm (rx, ry, 孔间距, 波导剩余宽度)")
 
     elif args.phase == 2:
         # Phase 2: 聚焦最佳区域精细扫描
-        # 基于 Phase 1 结果缩小范围
-        a_vals = np.round(np.arange(0.40, 0.48, 0.01), 3)
-        rx_vals = np.round(np.arange(0.12, 0.22, 0.01), 3)
+        a_vals = np.round(np.arange(0.60, 0.72, 0.01), 3)
+        rx_vals = np.round(np.arange(0.20, 0.25, 0.01), 3)
         ry_vals = np.round(np.arange(0.20, 0.45, 0.02), 3)
         N_vals = [16, 20, 24]
 
-        params = list(itertools.product(a_vals, rx_vals, ry_vals, N_vals))
-        print(f"Phase 2: {len(a_vals)}a × {len(rx_vals)}rx × {len(ry_vals)}ry × {len(N_vals)}N = {len(params)} 组")
+        params = [
+            (a, rx, ry, N)
+            for a, rx, ry, N in itertools.product(a_vals, rx_vals, ry_vals, N_vals)
+            if check_periodic_geometry(a, rx, ry, w_wg=w_wg)[0]
+        ]
+        print(f"Phase 2: 有效组合 {len(params)} 组 (已过滤 <{min_feature_nm}nm 特征)")
 
     else:
         print(f"Unknown phase: {args.phase}")
