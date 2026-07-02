@@ -1,0 +1,18 @@
+{
+  "a_m": 0.78,
+  "rx_m": 0.22,
+  "ry_m": 0.2,
+  "a_c": 0.789,
+  "rx_c": 0.2303,
+  "ry_c": 0.2067,
+  "N_taper": 3,
+  "N_mirror": 38,
+  "defect_gap": 0,
+  "N_total": 82,
+  "lambda0_nm": 1503.44,
+  "FWHM_nm": 1.4962,
+  "Q": 1005.0,
+  "T_peak": 0.1198,
+  "fit_r2": 0.9685,
+  "best_peak_score": 119.4
+}

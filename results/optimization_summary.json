@@ -1,0 +1,49 @@
+{
+  "optimization_date": "2026-07-02",
+  "constraints": {
+    "min_feature_nm": 200,
+    "geometry_valid": true
+  },
+  "targets": {
+    "Q_min": 1000,
+    "lambda0_nm_target": 1550,
+    "T_peak_target": 0.9,
+    "T_min_target": 0.1
+  },
+  "bandgap_2d_best": {
+    "a": 0.78,
+    "rx": 0.22,
+    "ry": 0.2,
+    "N": 20,
+    "T_min_gap": 0.00685,
+    "gap_width_nm": 160.6,
+    "gap_range_nm": [1480, 1640]
+  },
+  "cavity_2d_highQ": {
+    "run_id": 139,
+    "Q": 1232,
+    "lambda0_nm": 1502.71,
+    "T_peak": 0.114,
+    "a_c": 0.791,
+    "N_mirror": 42,
+    "meets_Q_target": true,
+    "meets_lambda_target": false,
+    "meets_T_peak_target": false
+  },
+  "cavity_2d_balanced_lambda": {
+    "run_id": 137,
+    "Q": 527,
+    "lambda0_nm": 1550.4,
+    "T_peak": 0.229,
+    "a_c": 0.785,
+    "N_mirror": 42,
+    "meets_Q_target": false,
+    "meets_lambda_target": true,
+    "meets_T_peak_target": false
+  },
+  "notes": [
+    "Under 200nm min-feature constraint, Q>=1000 and lambda~1550 nm are in tradeoff.",
+    "Highest Q=1232 at 1503nm; best lambda alignment Q=527 at 1550nm.",
+  "2D results require 3D verification (run_3d_cavity.py in progress)."
+  ]
+}

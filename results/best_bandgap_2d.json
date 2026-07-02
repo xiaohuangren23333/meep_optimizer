@@ -8,5 +8,6 @@
   "gap_width_nm": 160.5623518455809,
   "center_nm": 1560.3438240772098,
   "T_min": 0.006850222609001682,
-  "source": "2D phase1 scan with 200nm constraint"
+  "source": "2D phase1 scan with 200nm constraint",
+  "selection_score": 319.8916636215415
 }
