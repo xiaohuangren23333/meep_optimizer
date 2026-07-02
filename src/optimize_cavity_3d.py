@@ -268,9 +268,10 @@ def pick_best(rows):
 def verify_mirror_3d(mirror, nfreq, resolution, fixed_until=80):
     print("Verifying mirror bandgap in 3D...")
     geom, cell = build_periodic_geom_3d(mirror["a_m"], mirror["rx_m"], mirror["ry_m"], 20)
-    fh, _ = run_flux_sim_3d(geom, cell, nfreq, resolution, fixed_until=fixed_until)
-    rr = run_flux_sim_3d(build_ref_geom_3d(), cell, nfreq, resolution, fixed_until=fixed_until)
-    wl, tr = normalized_spectrum(fh, _, rr[0], rr[1])
+    freqs_h, flux_h = run_flux_sim_3d(geom, cell, nfreq, resolution, fixed_until=fixed_until)
+    freqs_r, flux_r = run_flux_sim_3d(build_ref_geom_3d(), cell, nfreq, resolution,
+                                      fixed_until=fixed_until)
+    wl, tr = normalized_spectrum(freqs_h, flux_h, freqs_r, flux_r)
     bg = analyze_bandgap_3d(wl, tr)
     print(f"  3D bandgap: {bg.get('gap_start_nm',0):.0f}-{bg.get('gap_end_nm',0):.0f} nm "
           f"T_min_gap={bg.get('T_min_gap',1):.4f}")
