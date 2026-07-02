@@ -72,8 +72,16 @@ def _i(x: str, d: int = 0) -> int:
 
 def load_2d_candidates(path: str, top_k: int) -> List[Dict]:
     out: List[Dict] = []
-    if os.path.isfile(path):
-        with open(path) as f:
+    candidate_paths = [path]
+    if path == "results/cavity_optimization_best.csv":
+        candidate_paths.extend([
+            "results/cavity_optimization_all.csv",
+            "results/cavity_optimization_all_v1.csv",
+        ])
+    chosen_path = next((p for p in candidate_paths if os.path.isfile(p)), None)
+
+    if chosen_path:
+        with open(chosen_path) as f:
             rd = csv.DictReader(f)
             for r in rd:
                 out.append({
