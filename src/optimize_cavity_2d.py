@@ -257,10 +257,21 @@ def extract_peaks(wl, T, bg_start, bg_end, delta_wl):
         if FWHM < 3 * delta_wl: valid = False; reasons.append("FWHM过窄")
         if r2 < 0.95: valid = False; reasons.append(f"R²={r2:.3f}<0.95")
 
+        # 局部基线（峰附近但避开峰中心），用于衡量“谐振峰附近透射谷值是否接近 0”
+        half_span_nm = 30.0
+        exclude_nm = max(1.5 * FWHM, 2 * delta_wl)
+        local_mask = (wl_bg >= x0 - half_span_nm) & (wl_bg <= x0 + half_span_nm)
+        valley_mask = local_mask & ((wl_bg < x0 - exclude_nm) | (wl_bg > x0 + exclude_nm))
+        if np.any(valley_mask):
+            t_floor_local = float(np.min(T_bg[valley_mask]))
+        else:
+            t_floor_local = float(np.min(T_bg[local_mask])) if np.any(local_mask) else float(np.min(T_bg))
+
         candidates.append({
             "lambda0_nm": float(x0), "FWHM_nm": float(FWHM), "Q": float(Q),
             "T_peak": float(T_pk), "prominence": float(prom),
             "fit_r2": float(r2),
+            "T_floor_local": t_floor_local,
             "distance_to_gap_edge_nm": float(min(abs(x0-bg_start), abs(x0-bg_end))),
             "valid": valid, "invalid_reason": "; ".join(reasons) if reasons else "",
         })
@@ -278,10 +289,19 @@ def score_peak(peak):
         s -= 30
     else:
         s += max(0, 40 - dl * 2)
+    # 1) Q 目标: >=1000 强加分，但也保留连续梯度避免搜索停滞
     if peak["Q"] >= 1000:
-        s += 100
-    s += min(peak["Q"] / 100, 50)
-    s += min(peak["T_peak"] * 30, 30)
+        s += 120
+    s += min(peak["Q"] / 80, 70)
+
+    # 2) 谐振峰靠近 1（不是单纯越大越好）
+    tpk_err = abs(peak["T_peak"] - 1.0)
+    s += max(0, 35 - 120 * tpk_err)
+
+    # 3) 谐振峰附近透射谷值尽量低（接近 0）
+    t_floor = peak.get("T_floor_local", 1.0)
+    s += max(0, 40 - 180 * t_floor)
+
     s += peak["fit_r2"] * 10
     return s
 
@@ -295,7 +315,7 @@ CSV_HEADER = (
     "a_c,rx_c,ry_c,"
     "N_taper,N_mirror,defect_gap,N_total,"
     "valid_geometry,"
-    "lambda0_nm,FWHM_nm,Q,T_peak,prominence,fit_r2,"
+    "lambda0_nm,FWHM_nm,Q,T_peak,T_floor_local,prominence,fit_r2,"
     "best_peak_score,highest_q_peak_Q,"
     "spectrum_csv,spectrum_png,fit_png"
     ",error_message\n"
@@ -374,6 +394,7 @@ def save_run(wl, T, run_id, params, peaks, mirror, elapsed=0):
         "FWHM_nm": best_peak["FWHM_nm"] if best_peak else 0,
         "Q": best_peak["Q"] if best_peak else 0,
         "T_peak": best_peak["T_peak"] if best_peak else 0,
+        "T_floor_local": best_peak.get("T_floor_local", 0) if best_peak else 0,
         "prominence": best_peak["prominence"] if best_peak else 0,
         "fit_r2": best_peak["fit_r2"] if best_peak else 0,
         "best_peak_score": score_peak(best_peak) if best_peak else -100,
@@ -394,7 +415,7 @@ def append_csv_row(row, fpath="results/cavity_optimization_all.csv"):
             f"{row['N_taper']},{row['N_mirror']},{row['defect_gap']},{row['N_total']},"
             f"{row['valid_geometry']},"
             f"{row['lambda0_nm']:.2f},{row['FWHM_nm']:.4f},"
-            f"{row['Q']:.0f},{row['T_peak']:.4f},"
+            f"{row['Q']:.0f},{row['T_peak']:.4f},{row.get('T_floor_local',0):.4f},"
             f"{row['prominence']:.4f},{row['fit_r2']:.4f},"
             f"{row['best_peak_score']:.1f},{row['highest_q_peak_Q']:.0f},"
             f"{row['spectrum_csv']},{row['spectrum_png']},{row['fit_png']},"
@@ -621,7 +642,7 @@ def optimize(mirror):
                 f"{r['N_taper']},{r['N_mirror']},"
                 f"{r.get('defect_gap','0')},{r['N_total']},"
                 f"{r['valid_geometry']},"
-                f"{r['lambda0_nm']},{r['FWHM_nm']},{r['Q']},{r['T_peak']},"
+                f"{r['lambda0_nm']},{r['FWHM_nm']},{r['Q']},{r['T_peak']},{r.get('T_floor_local','0')},"
                 f"{r.get('prominence','0')},{r['fit_r2']},"
                 f"{r['best_peak_score']},{r.get('highest_q_peak_Q','0')},"
                 f"{r['spectrum_csv']},{r['spectrum_png']},{r['fit_png']},"
@@ -637,11 +658,16 @@ def optimize(mirror):
             "N_taper": int(best["N_taper"]), "N_mirror": int(best["N_mirror"]),
             "defect_gap": int(best.get("defect_gap", 0)),
             "N_total": int(best["N_total"]),
+            "mirror_bandgap_start_nm": float(mirror.get("bandgap_start_nm", 0)),
+            "mirror_bandgap_end_nm": float(mirror.get("bandgap_end_nm", 0)),
+            "mirror_bandgap_width_nm": float(mirror.get("gap_width_nm", 0)),
             "lambda0_nm": float(best["lambda0_nm"]),
             "FWHM_nm": float(best["FWHM_nm"]),
             "Q": float(best["Q"]),
             "T_peak": float(best["T_peak"]),
+            "T_floor_local": float(best.get("T_floor_local", 0) or 0),
             "fit_r2": float(best["fit_r2"]),
+            "target_score_2d": float(best.get("best_peak_score", -100) or -100),
         }
         with open("results/best_cavity_design.json", "w") as f:
             json.dump(design, f, indent=2)
