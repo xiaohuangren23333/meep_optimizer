@@ -13,7 +13,7 @@ import argparse
 import csv
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import numpy as np
 from scipy.optimize import curve_fit
@@ -115,6 +115,31 @@ def load_2d_candidates(path: str, top_k: int) -> List[Dict]:
         })
     out.sort(key=lambda x: (x["score_2d"], x["q_2d"], x["t_peak_2d"]), reverse=True)
     return out[:top_k]
+
+
+def expand_candidates(base: List[Dict], mirror_list: List[int], taper_list: List[int]) -> List[Dict]:
+    """
+    在 2D 最佳参数周围，扩展 3D 结构长度扫描（主要通过 N_mirror/N_taper 调 Q）。
+    """
+    expanded: List[Dict] = []
+    seen = set()
+    for c in base:
+        for nm in mirror_list:
+            for nt in taper_list:
+                cc = dict(c)
+                cc["N_mirror"] = int(nm)
+                cc["N_taper"] = int(nt)
+                key = (
+                    round(cc["a_c"], 6), round(cc["rx_c"], 6), round(cc["ry_c"], 6),
+                    cc["N_taper"], cc["N_mirror"]
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                expanded.append(cc)
+    # 先按 2D 得分排序，再倾向更长镜区（更有机会提升 Q）
+    expanded.sort(key=lambda x: (x["score_2d"], x["N_mirror"], x["N_taper"]), reverse=True)
+    return expanded
 
 
 def lorentzian(x, x0, gamma, A, offset):
@@ -268,6 +293,8 @@ def main():
     parser = argparse.ArgumentParser(description="3D target-driven cavity optimization")
     parser.add_argument("--best-csv", default="results/cavity_optimization_best.csv")
     parser.add_argument("--top-k", type=int, default=3)
+    parser.add_argument("--mirror-list", default="8,10,12,15,18")
+    parser.add_argument("--taper-list", default="3,4,5")
     parser.add_argument("--quick", action="store_true", help="lower resolution/nfreq for faster iteration")
     parser.add_argument("--stop-on-target", action="store_true", help="stop once target is met")
     parser.add_argument("--dry-run", action="store_true", help="show selected candidates only")
@@ -275,9 +302,12 @@ def main():
 
     os.makedirs(RESULT_DIR, exist_ok=True)
     mirror = load_mirror()
-    candidates = load_2d_candidates(args.best_csv, args.top_k)
-    if not candidates:
+    base_candidates = load_2d_candidates(args.best_csv, args.top_k)
+    if not base_candidates:
         raise RuntimeError("No 2D candidates found. Run optimize_cavity_2d.py first.")
+    mirror_list = [_i(x.strip(), 10) for x in args.mirror_list.split(",") if x.strip()]
+    taper_list = [_i(x.strip(), 3) for x in args.taper_list.split(",") if x.strip()]
+    candidates = expand_candidates(base_candidates, mirror_list, taper_list)
 
     print("=" * 70)
     print("3D 目标驱动优化")
@@ -285,8 +315,12 @@ def main():
     print(f"mirror from: {mirror['source']}")
     print(f"mirror gap: {mirror['gap_start_nm']:.1f}-{mirror['gap_end_nm']:.1f} nm "
           f"(width={mirror['gap_width_nm']:.1f} nm)")
-    print(f"selected candidates: {len(candidates)}")
+    print(f"base 2D candidates: {len(base_candidates)}")
+    print(f"expanded 3D candidates: {len(candidates)}")
     for i, c in enumerate(candidates, 1):
+        if i > 12:
+            print(f"  ... ({len(candidates)} total)")
+            break
         print(f"  [{i}] a_c={c['a_c']:.4f} rx_c={c['rx_c']:.4f} ry_c={c['ry_c']:.4f} "
               f"Nt={c['N_taper']} Nm={c['N_mirror']} | 2D Q={c['q_2d']:.0f} score={c['score_2d']:.1f}")
     if args.dry_run:
@@ -316,6 +350,8 @@ def main():
         "config": {
             "best_csv": args.best_csv,
             "top_k": args.top_k,
+            "mirror_list": mirror_list,
+            "taper_list": taper_list,
             "quick": args.quick,
             "stop_on_target": args.stop_on_target,
         },
