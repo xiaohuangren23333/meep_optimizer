@@ -161,8 +161,11 @@ if __name__ == "__main__":
     print("3D 缺陷腔 FDTD 验证")
     print("=" * 70)
 
-    # 读取 2D 最佳设计
-    with open("results/best_cavity_design.json") as f:
+    # 读取 3D 优化最佳设计（优先）或 2D 回退
+    design_path = "results_3d/cavity/best_cavity_3d.json"
+    if not os.path.exists(design_path):
+        design_path = "results/best_cavity_design.json"
+    with open(design_path) as f:
         design = json.load(f)
 
     mirror = {
@@ -173,11 +176,11 @@ if __name__ == "__main__":
         "N_taper": design["N_taper"], "N_mirror": design["N_mirror"]
     }
 
-    print(f"\n2D 最佳设计:")
+    print(f"\n设计来源: {design_path}")
     print(f"  镜区: a_m={mirror['a_m']:.3f} rx_m={mirror['rx_m']:.3f} ry_m={mirror['ry_m']:.3f}")
     print(f"  缺陷: a_c={cavity['a_c']:.4f} rx_c={cavity['rx_c']:.3f} ry_c={cavity['ry_c']:.3f}")
     print(f"  N_taper={cavity['N_taper']} N_mirror={cavity['N_mirror']}")
-    print(f"  2D 预测: Q={design['Q']:.0f} T_peak={design['T_peak']:.3f} λ₀={design['lambda0_nm']:.1f}nm")
+    print(f"  3D/2D 预测: Q={design.get('Q',0):.0f} T_peak={design.get('T_peak',0):.3f} λ₀={design.get('lambda0_nm',0):.1f}nm")
 
     ok, violations = check_cavity_geometry(
         mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
