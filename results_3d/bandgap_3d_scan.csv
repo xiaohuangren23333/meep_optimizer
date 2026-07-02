@@ -1,3 +1,0 @@
-label,a,rx,ry,N,gap_width_nm,gap_start_nm,gap_end_nm,T_min_gap,T_max,score,elapsed_s,spectrum_csv
-a0.7700_rx0.2100_ry0.2100_N18,0.77,0.21,0.21,18,0.0,0.0,0.0,0.457472,0.534032,-100.6438,227.0,results_3d/spectra/a0.7700_rx0.2100_ry0.2100_N18.csv
-a0.7700_rx0.2100_ry0.2100_N20,0.77,0.21,0.21,20,0.0,0.0,0.0,0.418369,0.498876,-92.0412,248.1,results_3d/spectra/a0.7700_rx0.2100_ry0.2100_N20.csv

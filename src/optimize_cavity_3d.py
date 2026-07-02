@@ -111,7 +111,8 @@ def run_periodic_bandgap_3d(a, rx, ry, n_period, nfreq, resolution):
     return analyze_bandgap_3d(wl, tr)
 
 
-def evaluate_cavity_3d(run_id, mirror, cavity, nfreq, resolution, bandgap=None):
+def evaluate_cavity_3d(run_id, mirror, cavity, nfreq, resolution, bandgap=None,
+                         fixed_until=120, high_accuracy=False):
     label = (f"ac{cavity['a_c']:.4f}_rxc{cavity['rx_c']:.3f}_"
              f"Nm{cavity['N_mirror']}_Nt{cavity['N_taper']}")
     ok, viol = check_cavity_geometry(
@@ -127,9 +128,9 @@ def evaluate_cavity_3d(run_id, mirror, cavity, nfreq, resolution, bandgap=None):
     try:
         geom, sx, sy, sz = build_cavity_geom_3d(mirror, cavity)
         cell = (sx, sy, sz)
-        freqs_h, flux_h = run_flux_sim_3d(geom, cell, nfreq, resolution, decay=1e-3, decay_time=25)
-        freqs_r, flux_r = run_flux_sim_3d(build_ref_geom_3d(), cell, nfreq, resolution,
-                                          decay=1e-3, decay_time=25)
+        kw = {} if high_accuracy else {"fixed_until": fixed_until}
+        freqs_h, flux_h = run_flux_sim_3d(geom, cell, nfreq, resolution, **kw)
+        freqs_r, flux_r = run_flux_sim_3d(build_ref_geom_3d(), cell, nfreq, resolution, **kw)
         wl, tr = normalized_spectrum(freqs_h, flux_h, freqs_r, flux_r)
         peak = fit_cavity_peak(wl, tr, bandgap=mirror)
         elapsed = time.time() - t0
@@ -199,9 +200,9 @@ def build_phase1_grid(seeds, mirror):
     grid = []
     for seed in seeds:
         ac0 = seed["a_c"]
-        nm0 = min(seed["N_mirror"], 24)
-        for nm in sorted({max(10, nm0 - 4), nm0, min(nm0 + 4, 28)}):
-            for ac in np.round(np.linspace(ac0 - 0.02, ac0 + 0.02, 5), 4):
+        nm0 = min(seed["N_mirror"], 18)
+        for nm in sorted({10, 14, nm0}):
+            for ac in np.round(np.linspace(ac0 - 0.015, ac0 + 0.015, 4), 4):
                 cavity = {
                     "a_c": float(ac),
                     "rx_c": seed["rx_c"],
@@ -264,11 +265,13 @@ def pick_best(rows):
     return max(valid, key=lambda r: (float(r["score"]), float(r["Q"])))
 
 
-def verify_mirror_3d(mirror, nfreq, resolution):
+def verify_mirror_3d(mirror, nfreq, resolution, fixed_until=80):
     print("Verifying mirror bandgap in 3D...")
-    bg = run_periodic_bandgap_3d(
-        mirror["a_m"], mirror["rx_m"], mirror["ry_m"], 20, nfreq, resolution,
-    )
+    geom, cell = build_periodic_geom_3d(mirror["a_m"], mirror["rx_m"], mirror["ry_m"], 20)
+    fh, _ = run_flux_sim_3d(geom, cell, nfreq, resolution, fixed_until=fixed_until)
+    rr = run_flux_sim_3d(build_ref_geom_3d(), cell, nfreq, resolution, fixed_until=fixed_until)
+    wl, tr = normalized_spectrum(fh, _, rr[0], rr[1])
+    bg = analyze_bandgap_3d(wl, tr)
     print(f"  3D bandgap: {bg.get('gap_start_nm',0):.0f}-{bg.get('gap_end_nm',0):.0f} nm "
           f"T_min_gap={bg.get('T_min_gap',1):.4f}")
     mirror["bandgap_start_nm"] = bg.get("gap_start_nm", mirror["bandgap_start_nm"])
@@ -281,9 +284,11 @@ def main():
     parser = argparse.ArgumentParser(description="3D defect cavity optimizer")
     parser.add_argument("--phase", default="1", choices=["1", "2", "refine"],
                         help="1=coarse grid, 2=refine best, refine=coarse+refine loop")
-    parser.add_argument("--nfreq", type=int, default=600)
-    parser.add_argument("--resolution", type=int, default=14)
-    parser.add_argument("--max-runs", type=int, default=80)
+    parser.add_argument("--nfreq", type=int, default=400)
+    parser.add_argument("--resolution", type=int, default=12)
+    parser.add_argument("--fixed-until", type=int, default=120,
+                        help="Fixed FDTD time steps for fast scan (0=use field decay)")
+    parser.add_argument("--max-runs", type=int, default=24)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -320,9 +325,12 @@ def main():
     best_row = None
     target_hit = None
 
+    fixed_until = args.fixed_until if args.fixed_until > 0 else None
+
     for cavity in grid[: args.max_runs]:
         run_id += 1
-        row = evaluate_cavity_3d(run_id, mirror, cavity, args.nfreq, args.resolution, bandgap)
+        row = evaluate_cavity_3d(run_id, mirror, cavity, args.nfreq, args.resolution,
+                                 bandgap, fixed_until=fixed_until)
         append_csv(row)
         if float(row.get("Q", 0) or 0) > 0:
             all_rows.append(row)
@@ -345,7 +353,8 @@ def main():
         for cavity in build_refine_grid(best_row, mirror)[:30]:
             run_id += 1
             row = evaluate_cavity_3d(run_id, mirror, cavity, args.nfreq + 200,
-                                     min(args.resolution + 2, 18), bandgap)
+                                     min(args.resolution + 2, 16), bandgap,
+                                     fixed_until=None, high_accuracy=True)
             append_csv(row)
             if row.get("targets_met"):
                 save_best(row, mirror)

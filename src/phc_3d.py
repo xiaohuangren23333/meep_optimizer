@@ -98,7 +98,8 @@ def build_cavity_geom_3d(mirror, cavity):
     return geom, sx, sy, sz
 
 
-def run_flux_sim_3d(geom, cell, nfreq, resolution=16, decay=1e-3, decay_time=30):
+def run_flux_sim_3d(geom, cell, nfreq, resolution=16, decay=1e-3, decay_time=30,
+                      fixed_until=None):
     sx = cell.x if hasattr(cell, "x") else cell[0]
     src_x = -sx / 2 + dpml + 0.5
     mon_x = sx / 2 - dpml - 0.5
@@ -113,8 +114,11 @@ def run_flux_sim_3d(geom, cell, nfreq, resolution=16, decay=1e-3, decay_time=30)
                         sources=sources, boundary_layers=[mp.PML(dpml)])
     fr = mp.FluxRegion(center=mon_point, size=mp.Vector3(0, 2 * w_wg, 2 * h_total))
     tr = sim.add_flux(fcen, df, nfreq, fr)
-    sim.run(until_after_sources=mp.stop_when_fields_decayed(
-        decay_time, mp.Ey, mon_point, decay))
+    if fixed_until is not None:
+        sim.run(until_after_sources=fixed_until)
+    else:
+        sim.run(until_after_sources=mp.stop_when_fields_decayed(
+            decay_time, mp.Ey, mon_point, decay))
     freqs = np.array(mp.get_flux_freqs(tr))
     flux = np.array(mp.get_fluxes(tr))
     sim.reset_meep()

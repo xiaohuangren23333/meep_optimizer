@@ -23,7 +23,7 @@ fi
 
 # Stage 2: 3D cavity coarse + refine
 echo ">>> Stage 2: 3D cavity optimization (refine)"
-python src/optimize_cavity_3d.py --phase refine --nfreq 600 --resolution 14 --max-runs 35
+python src/optimize_cavity_3d.py --phase refine --nfreq 400 --resolution 12 --fixed-until 120 --max-runs 24
 
 # Stage 3: fine refine if 3D targets not met
 if ! python3 - <<'PY'
@@ -37,7 +37,7 @@ if not d.get("targets_met"):
 PY
 then
   echo ">>> Stage 3: 3D cavity fine refine (higher resolution)"
-  python src/optimize_cavity_3d.py --phase 2 --nfreq 1000 --resolution 16 --max-runs 20
+  python src/optimize_cavity_3d.py --phase 2 --nfreq 800 --resolution 14 --fixed-until 0 --max-runs 12
 fi
 
 # Stage 4: final high-res verify

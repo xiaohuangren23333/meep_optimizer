@@ -1,0 +1,2 @@
+run_id,label,a_m,rx_m,ry_m,a_c,rx_c,ry_c,N_taper,N_mirror,lambda0_nm,FWHM_nm,Q,T_peak,fit_r2,score,targets_met,elapsed_s,spectrum_csv,error
+1,ac0.7710_rxc0.230_Nm20_Nt3,0.78,0.22,0.2,0.771,0.2303,0.2067,3,20,1569.8919466287189,73.2257919016922,21.439057275561392,0.17459419129276993,0.9998240706161441,104.5,False,998.1,results_3d/cavity/spectra/cavity3d_0001_ac0.7710_rxc0.230_Nm20_Nt3.csv,
