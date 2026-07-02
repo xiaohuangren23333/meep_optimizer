@@ -23,7 +23,10 @@ from matplotlib.patches import Ellipse
 from scipy.optimize import curve_fit
 from scipy.signal import find_peaks
 
-import run_3d_cavity as c3d
+try:
+    import run_3d_cavity as c3d
+except ModuleNotFoundError:
+    from src import run_3d_cavity as c3d
 
 
 RESULT_DIR = "results/cavity_3d"
