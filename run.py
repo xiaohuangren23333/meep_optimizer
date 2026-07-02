@@ -6,6 +6,7 @@ MEEP 一维光子晶体优化 — 主入口
   python run.py bandgap-3d     # 3D 禁带坐标下降优化
   python run.py cavity-2d      # 2D 缺陷腔 6 步优化 (Q, T_peak)
   python run.py cavity-3d      # 3D 缺陷腔验证
+  python run.py target-3d      # 目标驱动 3D 批量验证（按 Q/λ/T 指标排序）
   python run.py all            # 依次执行 bandgap → cavity-2d → cavity-3d
 """
 import argparse
@@ -31,7 +32,7 @@ def main():
     parser = argparse.ArgumentParser(description="PHC optimizer pipeline")
     parser.add_argument(
         "command",
-        choices=["bandgap-3d", "cavity-2d", "cavity-3d", "all"],
+        choices=["bandgap-3d", "cavity-2d", "cavity-3d", "target-3d", "all"],
         help="optimization stage to run",
     )
     args = parser.parse_args()
@@ -40,6 +41,7 @@ def main():
         "bandgap-3d": ["optimize_3d_ridge.py"],
         "cavity-2d": ["optimize_cavity_2d.py"],
         "cavity-3d": ["run_3d_cavity.py"],
+        "target-3d": ["optimize_target_3d.py"],
     }
 
     if args.command == "all":
