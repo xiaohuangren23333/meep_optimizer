@@ -17,6 +17,7 @@ Skills are **in-repo** so Cloud Agents can read them without your local `C:\User
 
 | Category | Skills |
 |----------|--------|
+| **Meep PHC（主）** | **`meep-phc-optimizer`** — 二次渐变椭圆柱一维光子晶体优化 |
 | Meep / Q | `optical-resonance-q`, `fdtdx-mode-source-overlap` |
 | Data / code | `datafile-quicklook`, `xlsx`, `pdf`, `python-debugger`, `code-review`, `git-commit-helper` |
 | Literature | `gs-researcher`, `ieee-researcher`, `wos-researcher`, `cnki-researcher`, `sd-researcher` (+ companion `*-search`, `*-export`, …) |

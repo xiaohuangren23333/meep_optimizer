@@ -13,6 +13,7 @@
 - 不要把 2D 结果说成真实 3D 器件结果
 
 本项目可以参考 Meep 官方 Python 教程和示例。
+Agent Skill：`.cursor/skills/meep-phc-optimizer/SKILL.md`（二次渐变椭圆柱 PHC 优化全流程）
 
 优先参考：
 1. Resonant Modes and Transmission in a Waveguide Cavity

@@ -6,6 +6,7 @@ Bundled under `.cursor/skills/` for Cloud Agents. Read `SKILL.md` in each folder
 
 | Skill | Use |
 |-------|-----|
+| **`meep-phc-optimizer`** | **主 Skill**：二次渐变椭圆柱 PHC、Phase1/2、Meep 归一化与优化流程 |
 | `optical-resonance-q` | Q from transmission spectra (FDTD: `peak_bracketed`) |
 | `fdtdx-mode-source-overlap` | Mode source / overlap / transmission concepts |
 
