@@ -11,7 +11,7 @@ from matplotlib.patches import Ellipse, Rectangle
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from config import w_wg, h_slab, h_ridge, h_total, min_feature_um
-from phc_3d import graded_hole_layout
+from phc_3d import size_graded_layout
 
 
 def load_design():
@@ -22,35 +22,28 @@ def load_design():
         if os.path.exists(p):
             d = json.load(open(p))
             return {
-                "a_end": d.get("a_end", a_m), "rx": d.get("rx_c", rx_m),
-                "ry": d.get("ry_c", ry_m), "a_center": d.get("a_center", a_m),
-                "N_taper": int(d.get("N_taper", 18)),
-                "N_mirror": int(d.get("N_mirror", 0)),
+                "a": d.get("a", a_m), "rx": d.get("rx", rx_m),
+                "ry_end": d.get("ry_end", ry_m),
+                "ry_center": d.get("ry_center", ry_m * 0.6),
+                "N_taper": int(d.get("N_taper", 12)),
+                "N_mirror": int(d.get("N_mirror", 8)),
                 "Q": d.get("Q"), "lam": d.get("lambda0_nm"), "src": p,
             }
-    return {"a_end": a_m, "rx": rx_m, "ry": ry_m, "a_center": 0.70,
-            "N_taper": 18, "N_mirror": 0, "Q": None, "lam": None, "src": "defaults"}
+    return {"a": a_m, "rx": rx_m, "ry_end": ry_m, "ry_center": ry_m * 0.6,
+            "N_taper": 12, "N_mirror": 8, "Q": None, "lam": None, "src": "defaults"}
 
 
 def hole_positions(design):
-    """Graded, mirror-free layout: (x, rx, ry, kind)."""
-    a_end = design["a_end"]; a_c = design["a_center"]
-    rx = design["rx"]; ry = design["ry"]
-    Nt = design["N_taper"]; Nm = design["N_mirror"]
-    positions, _ = graded_hole_layout(a_end, a_c, Nt, Nm)
-    holes = []
-    for i, x in enumerate(positions):
-        kind = "taper" if i < Nt else "mirror"
-        holes.append((x, rx, ry, kind))
-        holes.append((-x, rx, ry, kind))
-    holes.sort(key=lambda h: h[0])
-    return holes
+    """Size-graded layout: (x, rx, ry, kind)."""
+    return size_graded_layout(design["a"], design["rx"], design["ry_end"],
+                              design["ry_center"], design["N_taper"],
+                              design["N_mirror"])
 
 
 def main():
     design = load_design()
-    a_m = design["a_end"]; rx_m = design["rx"]; ry_m = design["ry"]
-    a_c = design["a_center"]; Nt = design["N_taper"]; Nm = design["N_mirror"]
+    a_m = design["a"]; rx_m = design["rx"]; ry_m = design["ry_end"]
+    ry_c = design["ry_center"]; Nt = design["N_taper"]; Nm = design["N_mirror"]
     Q = design["Q"]; lam = design["lam"]; src = design["src"]
     holes = hole_positions(design)
     span = max(abs(h[0]) for h in holes) + a_m
@@ -80,8 +73,8 @@ def main():
     ax_top.set_aspect("equal")
     ax_top.set_xlabel("x (μm)")
     ax_top.set_ylabel("y (μm)")
-    title = (f"3D Ridge PhC Graded (mirror-free) Defect Cavity — Top view\n"
-             f"a_end={a_m:.3f} a_center={a_c:.3f} rx={rx_m:.3f} ry={ry_m:.3f} μm | "
+    title = (f"3D Ridge PhC Size-Graded Defect Cavity (1st-order gap) — Top view\n"
+             f"a={a_m:.3f} rx={rx_m:.3f} ry: {ry_c:.3f}(center)→{ry_m:.3f}(mirror) μm | "
              f"N_taper={Nt} N_mirror={Nm} | total holes={len(holes)}")
     if Q:
         title += f"\n3D: Q={Q:.0f}, λ₀={lam:.1f} nm  (source: {os.path.basename(src)})"
@@ -123,11 +116,10 @@ def main():
     for j, (x, rx, ry, kind) in enumerate(holes):
         ax.add_patch(Ellipse((x, 0), 2 * rx, 2 * ry,
                              facecolor="white", edgecolor=colors[kind], lw=1.5))
-    # annotate the graded period (spacing) between adjacent right-side holes
-    for j in range(1, min(len(right), 7)):
-        gap = right[j][0] - right[j - 1][0]
-        xm = 0.5 * (right[j][0] + right[j - 1][0])
-        ax.annotate(f"{gap*1000:.0f}", (xm, ry + 0.08), ha="center", fontsize=7,
+    # annotate the graded hole y-diameter for the inner right-side holes
+    for j in range(min(len(right), 7)):
+        x, rx, ry, kind = right[j]
+        ax.annotate(f"{2*ry*1000:.0f}", (x, ry + 0.08), ha="center", fontsize=7,
                     color="#555")
     zoom = min((Nt + 2) * a_m, span)
     ax.set_xlim(-zoom, zoom)
@@ -136,9 +128,9 @@ def main():
     ax.axvline(0, color="gray", ls="--", lw=0.8)
     ax.set_xlabel("x (μm)")
     ax.set_ylabel("y (μm)")
-    ax.set_title(f"Center zoom — period graded {a_c*1000:.0f}→{a_m*1000:.0f} nm "
-                 f"(numbers = spacing nm); constant holes; min feature "
-                 f"{min_feature_um*1000:.0f} nm", fontsize=10)
+    ax.set_title(f"Center zoom — hole ry graded {2*ry_c*1000:.0f}→{2*ry_m*1000:.0f} nm "
+                 f"(numbers = hole y-diameter); fixed period {a_m*1000:.0f} nm; "
+                 f"min feature {min_feature_um*1000:.0f} nm", fontsize=9)
     plt.tight_layout()
     out2 = "results_3d/figures/cavity_center_zoom.png"
     plt.savefig(out2, dpi=150, bbox_inches="tight")

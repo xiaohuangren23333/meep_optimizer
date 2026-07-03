@@ -124,6 +124,66 @@ def graded_hole_layout(a_end, a_center, N_taper, N_mirror):
     return positions, periods
 
 
+def build_size_graded_cavity_geom_3d(a, rx, ry_end, ry_center, N_taper, N_mirror,
+                                       rx_center=None):
+    """Hole-SIZE graded defect cavity at fixed period ``a``.
+
+    The lattice period is held constant (so inter-hole walls stay >= min feature
+    even when the central defect is formed). The defect is created by shrinking
+    the holes toward the center: hole ry (and optionally rx) is tapered
+    quadratically from ``ry_center`` at the defect to ``ry_end`` (mirror) over
+    ``N_taper`` holes, then held at ``ry_end`` for ``N_mirror`` holes. Smaller
+    central holes add dielectric -> pulls a defect mode into the 1st-order gap.
+    The taper end holes act as the (distributed) mirror.
+    """
+    if rx_center is None:
+        rx_center = rx
+    total = N_taper + N_mirror
+    sizes = []  # (rx_i, ry_i)
+    for i in range(1, total + 1):
+        if i <= N_taper:
+            t = (i - 1) / (N_taper - 1) if N_taper > 1 else 1.0
+            rxi = rx_center + (rx - rx_center) * t**2
+            ryi = ry_center + (ry_end - ry_center) * t**2
+        else:
+            rxi, ryi = rx, ry_end
+        sizes.append((rxi, ryi))
+
+    positions = [(i + 0.5) * a for i in range(total)]
+    half_len = positions[-1] + rx
+    sx = 2 * dpml + 2 * half_len + 2 * pad
+    sy = 2 * dpml + w_wg + 2 * pad
+    sz = 2 * dpml + h_total + 1.5
+    geom = list(build_ref_geom_3d())
+    for (rxi, ryi), x in zip(sizes, positions):
+        for sign in (-1.0, 1.0):
+            geom.append(mp.Ellipsoid(
+                material=mp.Medium(index=n_air),
+                center=mp.Vector3(sign * x, 0, h_total / 2),
+                size=mp.Vector3(2 * rxi, 2 * ryi, h_total),
+            ))
+    return geom, sx, sy, sz
+
+
+def size_graded_layout(a, rx, ry_end, ry_center, N_taper, N_mirror):
+    """Return list of (x, rx_i, ry_i, kind) for plotting a size-graded cavity."""
+    total = N_taper + N_mirror
+    holes = []
+    for i in range(1, total + 1):
+        if i <= N_taper:
+            t = (i - 1) / (N_taper - 1) if N_taper > 1 else 1.0
+            ryi = ry_center + (ry_end - ry_center) * t**2
+            kind = "taper"
+        else:
+            ryi = ry_end
+            kind = "mirror"
+        x = (i - 0.5) * a
+        holes.append((x, rx, ryi, kind))
+        holes.append((-x, rx, ryi, kind))
+    holes.sort(key=lambda h: h[0])
+    return holes
+
+
 def build_graded_cavity_geom_3d(a_end, a_center, rx, ry, N_taper, N_mirror=0):
     """Mirror-free, long-taper defect cavity (period grading, constant hole size)."""
     positions, _ = graded_hole_layout(a_end, a_center, N_taper, N_mirror)

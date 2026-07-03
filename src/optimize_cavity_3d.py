@@ -28,15 +28,15 @@ from config import (
 )
 from phc_3d import (
     analyze_bandgap_3d,
-    build_graded_cavity_geom_3d,
     build_periodic_geom_3d,
     build_ref_geom_3d,
+    build_size_graded_cavity_geom_3d,
     fit_cavity_peak,
-    graded_hole_layout,
     meets_3d_targets,
     normalized_spectrum,
     run_flux_sim_3d,
     score_cavity_3d,
+    size_graded_layout,
 )
 
 RESULTS_DIR = "results_3d"
@@ -49,7 +49,7 @@ BANDGAP_PATH = os.path.join(RESULTS_DIR, "best_bandgap_3d.json")
 MIRROR_FALLBACK = "results/best_bandgap_params.json"
 
 CSV_FIELDS = [
-    "run_id", "label", "a_end", "a_center", "rx", "ry", "N_taper", "N_mirror",
+    "run_id", "label", "a", "rx", "ry_end", "ry_center", "N_taper", "N_mirror",
     "total_holes", "device_um", "lambda0_nm", "FWHM_nm", "Q", "T_peak", "fit_r2",
     "score", "targets_met", "elapsed_s", "spectrum_csv", "error",
 ]
@@ -66,49 +66,49 @@ def load_mirror():
             with open(path) as f:
                 raw = json.load(f)
             mirror = {
-                "a_end": float(raw.get("a_m") or raw["a"]),
+                "a": float(raw.get("a_m") or raw["a"]),
                 "rx": float(raw.get("rx_m") or raw["rx"]),
-                "ry": float(raw.get("ry_m") or raw["ry"]),
+                "ry_end": float(raw.get("ry_m") or raw["ry"]),
                 "bandgap_start_nm": float(raw.get("gap_start_nm", 1480)),
                 "bandgap_end_nm": float(raw.get("gap_end_nm", 1620)),
                 "T_min_gap": float(raw.get("T_min") or raw.get("T_min_gap", 1)),
             }
-            ok, viol = check_hole_geometry(mirror["a_end"], mirror["rx"], mirror["ry"])
+            ok, viol = check_hole_geometry(mirror["a"], mirror["rx"], mirror["ry_end"])
             if not ok:
                 raise RuntimeError(f"Mirror violates {min_feature_nm}nm: {viol}")
             return mirror
     raise FileNotFoundError("Run bandgap first to create mirror params JSON")
 
 
-def geometry_ok(a_end, a_center, rx, ry, N_taper, N_mirror):
-    """All graded holes must respect the 200 nm min feature (smallest period is a_center)."""
-    ok, _ = check_hole_geometry(a_center, rx, ry, w_wg=w_wg)
+def geometry_ok(a, rx, ry_end, ry_center):
+    """All holes (mirror ry_end and defect ry_center) must respect 200 nm min feature."""
+    ok, _ = check_hole_geometry(a, rx, ry_center, w_wg=w_wg)
     if not ok:
         return False
-    ok, _ = check_hole_geometry(a_end, rx, ry, w_wg=w_wg)
+    ok, _ = check_hole_geometry(a, rx, ry_end, w_wg=w_wg)
     return ok
 
 
-def evaluate(run_id, mirror, a_center, N_taper, N_mirror, nfreq, resolution,
+def evaluate(run_id, mirror, ry_center, N_taper, N_mirror, nfreq, resolution,
              bandgap=None, fixed_until=None):
-    a_end = mirror["a_end"]
+    a = mirror["a"]
     rx = mirror["rx"]
-    ry = mirror["ry"]
-    label = f"ac{a_center:.3f}_Nt{N_taper}_Nm{N_mirror}"
-    if not geometry_ok(a_end, a_center, rx, ry, N_taper, N_mirror):
+    ry_end = mirror["ry_end"]
+    label = f"ryc{ry_center:.3f}_Nt{N_taper}_Nm{N_mirror}"
+    if not geometry_ok(a, rx, ry_end, ry_center):
         return {"run_id": run_id, "label": label, "error": "min feature",
                 "score": -1e6, "targets_met": False}
 
-    positions, _ = graded_hole_layout(a_end, a_center, N_taper, N_mirror)
-    total_holes = 2 * len(positions)
-    device_um = 2 * (positions[-1] + rx)
+    total = N_taper + N_mirror
+    total_holes = 2 * total
+    device_um = 2 * ((total - 0.5) * a + rx)
 
     print(f"[{run_id:03d}] {label} holes={total_holes} L={device_um:.1f}um",
           end="", flush=True)
     t0 = time.time()
     try:
-        geom, sx, sy, sz = build_graded_cavity_geom_3d(
-            a_end, a_center, rx, ry, N_taper, N_mirror)
+        geom, sx, sy, sz = build_size_graded_cavity_geom_3d(
+            a, rx, ry_end, ry_center, N_taper, N_mirror)
         cell = (sx, sy, sz)
         kw = {"fixed_until": fixed_until} if fixed_until else {}
         fh, flux_h = run_flux_sim_3d(geom, cell, nfreq, resolution, **kw)
@@ -116,7 +116,7 @@ def evaluate(run_id, mirror, a_center, N_taper, N_mirror, nfreq, resolution,
         wl, tr = normalized_spectrum(fh, flux_h, fr, flux_r)
         peak = fit_cavity_peak(wl, tr, bandgap=mirror)
         elapsed = time.time() - t0
-        spectrum_path = os.path.join(SPECTRA_DIR, f"graded_{run_id:04d}_{label}.csv")
+        spectrum_path = os.path.join(SPECTRA_DIR, f"sizegr_{run_id:04d}_{label}.csv")
         np.savetxt(spectrum_path, np.column_stack([wl, tr]),
                    delimiter=",", header="wavelength_nm,transmission", comments="")
 
@@ -124,7 +124,7 @@ def evaluate(run_id, mirror, a_center, N_taper, N_mirror, nfreq, resolution,
         met, _ = meets_3d_targets(peak, bandgap=bandgap)
         row = {
             "run_id": run_id, "label": label,
-            "a_end": a_end, "a_center": a_center, "rx": rx, "ry": ry,
+            "a": a, "rx": rx, "ry_end": ry_end, "ry_center": ry_center,
             "N_taper": N_taper, "N_mirror": N_mirror,
             "total_holes": total_holes, "device_um": round(device_um, 2),
             "lambda0_nm": peak["lambda0_nm"] if peak else 0,
@@ -161,18 +161,16 @@ def append_csv(row):
 
 def save_best(row, mirror):
     payload = {
-        "design": "graded_mirror_free",
-        "a_m": mirror["a_end"], "rx_m": mirror["rx"], "ry_m": mirror["ry"],
-        "a_end": row["a_end"], "a_center": row["a_center"],
-        "rx_c": row["rx"], "ry_c": row["ry"],
+        "design": "size_graded",
+        "a_m": mirror["a"], "rx_m": mirror["rx"], "ry_m": mirror["ry_end"],
+        "a": row["a"], "rx": row["rx"],
+        "ry_end": row["ry_end"], "ry_center": row["ry_center"],
         "N_taper": int(row["N_taper"]), "N_mirror": int(row["N_mirror"]),
         "total_holes": int(row["total_holes"]), "device_um": row["device_um"],
         "lambda0_nm": row["lambda0_nm"], "FWHM_nm": row["FWHM_nm"],
         "Q": row["Q"], "T_peak": row["T_peak"], "fit_r2": row["fit_r2"],
         "score": row["score"], "targets_met": row["targets_met"],
-        "source": "3D FDTD graded cavity scan", "scan_csv": CSV_PATH,
-        # legacy keys so run_3d_cavity can still read it
-        "a_c": row["a_center"],
+        "source": "3D FDTD size-graded cavity scan", "scan_csv": CSV_PATH,
     }
     with open(BEST_PATH, "w") as f:
         json.dump(payload, f, indent=2)
@@ -194,9 +192,9 @@ def pick_best(rows):
     return max(valid, key=lambda r: (float(r["score"]), float(r["Q"])))
 
 
-def verify_mirror_3d(mirror, nfreq, resolution, fixed_until=80):
+def verify_mirror_3d(mirror, nfreq, resolution, fixed_until=120):
     print("Verifying mirror bandgap in 3D...")
-    geom, cell = build_periodic_geom_3d(mirror["a_end"], mirror["rx"], mirror["ry"], 20)
+    geom, cell = build_periodic_geom_3d(mirror["a"], mirror["rx"], mirror["ry_end"], 20)
     fh, flux_h = run_flux_sim_3d(geom, cell, nfreq, resolution, fixed_until=fixed_until)
     fr, flux_r = run_flux_sim_3d(build_ref_geom_3d(), cell, nfreq, resolution,
                                  fixed_until=fixed_until)
@@ -210,33 +208,35 @@ def verify_mirror_3d(mirror, nfreq, resolution, fixed_until=80):
     return bg
 
 
-def coarse_grid(a_end):
-    """Center-period defect depths and taper lengths (mirror-free).
+def coarse_grid(mirror):
+    """Defect depth (central hole ry_center) and taper lengths.
 
-    Center period spans ~0.84-0.97 of a_end (shallow to moderate defect).
+    ry_center spans from min feature (0.10um = 200nm dia) up to ~0.9*ry_end,
+    i.e. shallow to deep defect. Smaller center hole = deeper dielectric defect.
     """
-    lo = round(0.84 * a_end, 3)
-    hi = round(0.96 * a_end, 3)
-    centers = [round(c, 3) for c in np.arange(lo, hi + 1e-9, 0.02)]
-    tapers = [12, 18, 24]
+    ry_end = mirror["ry_end"]
+    lo = max(0.10, round(0.5 * ry_end, 3))
+    hi = round(0.9 * ry_end, 3)
+    centers = [round(c, 3) for c in np.arange(lo, hi + 1e-9, 0.03)]
+    tapers = [8, 12, 18]
     return centers, tapers
 
 
 def main():
     parser = argparse.ArgumentParser(description="3D graded defect cavity optimizer")
     parser.add_argument("--phase", default="coarse", choices=["coarse", "refine"])
-    parser.add_argument("--nfreq", type=int, default=500)
-    parser.add_argument("--resolution", type=int, default=12)
-    parser.add_argument("--n-mirror", type=int, default=0,
-                        help="extra uniform holes after taper (0 = fully mirror-free)")
+    parser.add_argument("--nfreq", type=int, default=400)
+    parser.add_argument("--resolution", type=int, default=16)
+    parser.add_argument("--n-mirror", type=int, default=8,
+                        help="uniform mirror holes at ry_end after the taper")
     parser.add_argument("--max-runs", type=int, default=15)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     ensure_dirs()
     mirror = load_mirror()
-    a_end = mirror["a_end"]
-    centers, tapers = coarse_grid(a_end)
+    ry_end = mirror["ry_end"]
+    centers, tapers = coarse_grid(mirror)
 
     if args.phase == "coarse":
         grid = [(c, nt) for nt in tapers for c in centers]
@@ -246,21 +246,21 @@ def main():
         if not best:
             grid = [(c, nt) for nt in tapers for c in centers]
         else:
-            c0 = float(best["a_center"])
+            c0 = float(best["ry_center"])
             nt0 = int(best["N_taper"])
-            cs = [round(c, 3) for c in np.arange(c0 - 0.02, c0 + 0.021, 0.01)
-                  if 0.30 <= c <= a_end]
-            nts = sorted({max(8, nt0 - 6), nt0, nt0 + 6, nt0 + 12})
+            cs = [round(c, 3) for c in np.arange(c0 - 0.03, c0 + 0.031, 0.015)
+                  if 0.10 <= c <= ry_end]
+            nts = sorted({max(6, nt0 - 6), nt0, nt0 + 6, nt0 + 12})
             grid = [(c, nt) for nt in nts for c in cs]
 
-    print(f"3D graded cavity scan: {len(grid)} points, N_mirror={args.n_mirror}, "
+    print(f"3D size-graded cavity scan: {len(grid)} points, N_mirror={args.n_mirror}, "
           f"nfreq={args.nfreq}, res={args.resolution}")
     print(f"Targets: Q>={Q_target}, lambda~1550nm, min feature {min_feature_nm}nm")
     if args.dry_run:
         for c, nt in grid[:20]:
-            pos, _ = graded_hole_layout(a_end, c, nt, args.n_mirror)
-            print(f"  a_center={c:.3f} N_taper={nt} holes={2*len(pos)} "
-                  f"L={2*(pos[-1]+mirror['rx']):.1f}um")
+            total = nt + args.n_mirror
+            L = 2 * ((total - 0.5) * mirror["a"] + mirror["rx"])
+            print(f"  ry_center={c:.3f} N_taper={nt} holes={2*total} L={L:.1f}um")
         return
 
     bandgap = verify_mirror_3d(mirror, min(args.nfreq, 400), args.resolution)
@@ -287,9 +287,9 @@ def main():
                 return
 
     if best_row:
-        print(f"\nBest 3D graded so far: Q={best_row['Q']:.0f} "
+        print(f"\nBest 3D size-graded so far: Q={best_row['Q']:.0f} "
               f"lam={best_row['lambda0_nm']:.1f} T={best_row['T_peak']:.3f} "
-              f"Nt={best_row['N_taper']} a_c={best_row['a_center']}")
+              f"Nt={best_row['N_taper']} ry_c={best_row['ry_center']}")
         print(f"Saved -> {BEST_PATH}")
 
 
