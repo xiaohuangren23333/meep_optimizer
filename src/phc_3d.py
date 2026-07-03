@@ -98,6 +98,50 @@ def build_cavity_geom_3d(mirror, cavity):
     return geom, sx, sy, sz
 
 
+def graded_hole_layout(a_end, a_center, N_taper, N_mirror):
+    """Return (positions, period_list) for a mirror-free graded cavity.
+
+    Period grows smoothly (quadratic) from ``a_center`` at the defect center to
+    ``a_end`` after ``N_taper`` holes, then stays at ``a_end`` for ``N_mirror``
+    holes. There is NO abrupt uniform mirror block: the taper end itself acts as
+    the reflector. Holes are placed symmetrically about x=0 with a field
+    anti-node at the center (gap between the two innermost holes).
+    """
+    periods = []
+    total = N_taper + N_mirror
+    for i in range(1, total + 1):
+        if i <= N_taper:
+            t = (i - 1) / (N_taper - 1) if N_taper > 1 else 1.0
+            periods.append(a_center + (a_end - a_center) * t**2)
+        else:
+            periods.append(a_end)
+
+    positions = []
+    cum = 0.0
+    for a_i in periods:
+        cum += a_i
+        positions.append(cum - a_i / 2.0)
+    return positions, periods
+
+
+def build_graded_cavity_geom_3d(a_end, a_center, rx, ry, N_taper, N_mirror=0):
+    """Mirror-free, long-taper defect cavity (period grading, constant hole size)."""
+    positions, _ = graded_hole_layout(a_end, a_center, N_taper, N_mirror)
+    half_len = positions[-1] + rx
+    sx = 2 * dpml + 2 * half_len + 2 * pad
+    sy = 2 * dpml + w_wg + 2 * pad
+    sz = 2 * dpml + h_total + 1.5
+    geom = list(build_ref_geom_3d())
+    for x in positions:
+        for sign in (-1.0, 1.0):
+            geom.append(mp.Ellipsoid(
+                material=mp.Medium(index=n_air),
+                center=mp.Vector3(sign * x, 0, h_total / 2),
+                size=mp.Vector3(2 * rx, 2 * ry, h_total),
+            ))
+    return geom, sx, sy, sz
+
+
 def run_flux_sim_3d(geom, cell, nfreq, resolution=16, decay=1e-3, decay_time=30,
                       fixed_until=None):
     sx = cell.x if hasattr(cell, "x") else cell[0]

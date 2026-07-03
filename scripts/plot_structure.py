@@ -11,6 +11,7 @@ from matplotlib.patches import Ellipse, Rectangle
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from config import w_wg, h_slab, h_ridge, h_total, min_feature_um
+from phc_3d import graded_hole_layout
 
 
 def load_design():
@@ -20,39 +21,38 @@ def load_design():
               "results/best_cavity_design.json"):
         if os.path.exists(p):
             d = json.load(open(p))
-            return (a_m, rx_m, ry_m,
-                    d.get("a_c", a_m), d.get("rx_c", rx_m), d.get("ry_c", ry_m),
-                    int(d.get("N_taper", 3)), int(d.get("N_mirror", 20)),
-                    d.get("Q"), d.get("lambda0_nm"), p)
-    return a_m, rx_m, ry_m, a_m, rx_m, ry_m, 3, 20, None, None, "defaults"
+            return {
+                "a_end": d.get("a_end", a_m), "rx": d.get("rx_c", rx_m),
+                "ry": d.get("ry_c", ry_m), "a_center": d.get("a_center", a_m),
+                "N_taper": int(d.get("N_taper", 18)),
+                "N_mirror": int(d.get("N_mirror", 0)),
+                "Q": d.get("Q"), "lam": d.get("lambda0_nm"), "src": p,
+            }
+    return {"a_end": a_m, "rx": rx_m, "ry": ry_m, "a_center": 0.70,
+            "N_taper": 18, "N_mirror": 0, "Q": None, "lam": None, "src": "defaults"}
 
 
-def hole_positions(a_m, rx_m, ry_m, a_c, rx_c, ry_c, Nt, Nm):
-    holes = []  # (x, rx, ry, kind)
-    for i in range(Nm):
-        x = -(Nm - i + Nt) * a_m
-        holes.append((x, rx_m, ry_m, "mirror"))
-    for i in range(1, Nt + 1):
-        t = i / Nt
-        ai = a_c + (a_m - a_c) * t**2
-        rxi = rx_c + (rx_m - rx_c) * t**2
-        ryi = ry_c + (ry_m - ry_c) * t**2
-        holes.append((-(Nt - i + 0.5) * ai, rxi, ryi, "taper"))
-    for i in range(1, Nt + 1):
-        t = i / Nt
-        ai = a_c + (a_m - a_c) * t**2
-        rxi = rx_c + (rx_m - rx_c) * t**2
-        ryi = ry_c + (ry_m - ry_c) * t**2
-        holes.append(((Nt - i + 0.5) * ai, rxi, ryi, "taper"))
-    for i in range(Nm):
-        x = (Nm - i + Nt) * a_m
-        holes.append((x, rx_m, ry_m, "mirror"))
+def hole_positions(design):
+    """Graded, mirror-free layout: (x, rx, ry, kind)."""
+    a_end = design["a_end"]; a_c = design["a_center"]
+    rx = design["rx"]; ry = design["ry"]
+    Nt = design["N_taper"]; Nm = design["N_mirror"]
+    positions, _ = graded_hole_layout(a_end, a_c, Nt, Nm)
+    holes = []
+    for i, x in enumerate(positions):
+        kind = "taper" if i < Nt else "mirror"
+        holes.append((x, rx, ry, kind))
+        holes.append((-x, rx, ry, kind))
+    holes.sort(key=lambda h: h[0])
     return holes
 
 
 def main():
-    (a_m, rx_m, ry_m, a_c, rx_c, ry_c, Nt, Nm, Q, lam, src) = load_design()
-    holes = hole_positions(a_m, rx_m, ry_m, a_c, rx_c, ry_c, Nt, Nm)
+    design = load_design()
+    a_m = design["a_end"]; rx_m = design["rx"]; ry_m = design["ry"]
+    a_c = design["a_center"]; Nt = design["N_taper"]; Nm = design["N_mirror"]
+    Q = design["Q"]; lam = design["lam"]; src = design["src"]
+    holes = hole_positions(design)
     span = max(abs(h[0]) for h in holes) + a_m
 
     colors = {"mirror": "#c0392b", "taper": "#f39c12"}
@@ -80,9 +80,9 @@ def main():
     ax_top.set_aspect("equal")
     ax_top.set_xlabel("x (μm)")
     ax_top.set_ylabel("y (μm)")
-    title = (f"3D Ridge PhC Defect Cavity — Top view\n"
-             f"a_m={a_m:.3f} rx={rx_m:.3f} ry={ry_m:.3f} μm | "
-             f"N_mirror={Nm} N_taper={Nt} | total holes={len(holes)}")
+    title = (f"3D Ridge PhC Graded (mirror-free) Defect Cavity — Top view\n"
+             f"a_end={a_m:.3f} a_center={a_c:.3f} rx={rx_m:.3f} ry={ry_m:.3f} μm | "
+             f"N_taper={Nt} N_mirror={Nm} | total holes={len(holes)}")
     if Q:
         title += f"\n3D: Q={Q:.0f}, λ₀={lam:.1f} nm  (source: {os.path.basename(src)})"
     ax_top.set_title(title, fontsize=10)
@@ -119,20 +119,26 @@ def main():
     fig2, ax = plt.subplots(figsize=(12, 3.2))
     ax.add_patch(Rectangle((-span, -w_wg / 2), 2 * span, w_wg,
                            facecolor="#2980b9", alpha=0.30, edgecolor="#1b4f72"))
-    for x, rx, ry, kind in holes:
+    right = sorted([h for h in holes if h[0] > 0], key=lambda h: h[0])
+    for j, (x, rx, ry, kind) in enumerate(holes):
         ax.add_patch(Ellipse((x, 0), 2 * rx, 2 * ry,
                              facecolor="white", edgecolor=colors[kind], lw=1.5))
-        if abs(x) < 6 * a_m:
-            ax.annotate(f"{2*rx*1000:.0f}", (x, ry + 0.05), ha="center", fontsize=6)
-    zoom = (Nt + 4) * a_m
+    # annotate the graded period (spacing) between adjacent right-side holes
+    for j in range(1, min(len(right), 7)):
+        gap = right[j][0] - right[j - 1][0]
+        xm = 0.5 * (right[j][0] + right[j - 1][0])
+        ax.annotate(f"{gap*1000:.0f}", (xm, ry + 0.08), ha="center", fontsize=7,
+                    color="#555")
+    zoom = min((Nt + 2) * a_m, span)
     ax.set_xlim(-zoom, zoom)
-    ax.set_ylim(-w_wg / 2 - 0.3, w_wg / 2 + 0.4)
+    ax.set_ylim(-w_wg / 2 - 0.3, w_wg / 2 + 0.45)
     ax.set_aspect("equal")
     ax.axvline(0, color="gray", ls="--", lw=0.8)
     ax.set_xlabel("x (μm)")
     ax.set_ylabel("y (μm)")
-    ax.set_title(f"Cavity center zoom — taper (orange) → mirror (red); "
-                 f"min feature {min_feature_um*1000:.0f} nm respected", fontsize=10)
+    ax.set_title(f"Center zoom — period graded {a_c*1000:.0f}→{a_m*1000:.0f} nm "
+                 f"(numbers = spacing nm); constant holes; min feature "
+                 f"{min_feature_um*1000:.0f} nm", fontsize=10)
     plt.tight_layout()
     out2 = "results_3d/figures/cavity_center_zoom.png"
     plt.savefig(out2, dpi=150, bbox_inches="tight")

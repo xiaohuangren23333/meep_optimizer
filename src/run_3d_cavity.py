@@ -176,26 +176,43 @@ if __name__ == "__main__":
         "N_taper": design["N_taper"], "N_mirror": design["N_mirror"]
     }
 
+    is_graded = design.get("design") == "graded_mirror_free"
+
     print(f"\n设计来源: {design_path}")
+    if is_graded:
+        print(f"  类型: 全渐变(无硬镜区) a_end={design['a_end']:.3f} "
+              f"a_center={design['a_center']:.3f} N_taper={design['N_taper']}")
     print(f"  镜区: a_m={mirror['a_m']:.3f} rx_m={mirror['rx_m']:.3f} ry_m={mirror['ry_m']:.3f}")
     print(f"  缺陷: a_c={cavity['a_c']:.4f} rx_c={cavity['rx_c']:.3f} ry_c={cavity['ry_c']:.3f}")
     print(f"  N_taper={cavity['N_taper']} N_mirror={cavity['N_mirror']}")
     print(f"  3D/2D 预测: Q={design.get('Q',0):.0f} T_peak={design.get('T_peak',0):.3f} λ₀={design.get('lambda0_nm',0):.1f}nm")
 
-    ok, violations = check_cavity_geometry(
-        mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
-        cavity["a_c"], cavity["rx_c"], cavity["ry_c"],
-        cavity["N_taper"],
-    )
+    if is_graded:
+        from phc_3d import build_graded_cavity_geom_3d
+        ok, violations = check_cavity_geometry(
+            mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
+            design["a_center"], design["rx_c"], design["ry_c"], 1,
+        )
+    else:
+        ok, violations = check_cavity_geometry(
+            mirror["a_m"], mirror["rx_m"], mirror["ry_m"],
+            cavity["a_c"], cavity["rx_c"], cavity["ry_c"],
+            cavity["N_taper"],
+        )
     if not ok:
         print(f"\n⚠️ 设计不满足最小特征尺寸 {min_feature_nm}nm:")
         for v in violations:
             print(f"   - {v}")
-        print("   建议先重新运行 bandgap-3d / cavity-2d 优化。")
+        print("   建议先重新运行 bandgap / cavity 优化。")
         sys.exit(1)
 
     # 构建几何
-    geom, sx, sy, sz = build_cavity_3d(mirror, cavity)
+    if is_graded:
+        geom, sx, sy, sz = build_graded_cavity_geom_3d(
+            design["a_end"], design["a_center"], design["rx_c"], design["ry_c"],
+            int(design["N_taper"]), int(design.get("N_mirror", 0)))
+    else:
+        geom, sx, sy, sz = build_cavity_3d(mirror, cavity)
     print(f"\n3D 计算区域: {sx:.1f} x {sy:.1f} x {sz:.1f}")
 
     # 有孔腔仿真
