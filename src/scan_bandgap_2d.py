@@ -275,19 +275,19 @@ def main():
     args = parser.parse_args()
 
     if args.phase == 0:
-        # Phase 0: 快速验证 (10组)
+        # Phase 0: 快速验证 (10组) — 一阶带隙区 a~0.44
         params = []
-        for rx in [0.20, 0.21, 0.22]:
+        for rx in [0.10, 0.12, 0.14]:
             for ry in [0.20, 0.30, 0.40]:
-                params.append((0.64, rx, ry, 16))
+                params.append((0.44, rx, ry, 16))
         params = params[:10]  # 最多10组
 
     elif args.phase == 1:
-        # Phase 1: 大规模粗扫 (最小特征尺寸 >= 200nm)
-        # a 需满足 a >= 2*rx + 200nm，故 a 从 0.60 μm 起扫
-        a_vals = np.round(np.arange(0.60, 0.78, 0.02), 3)
-        rx_vals = np.round(np.arange(0.20, 0.26, 0.02), 3)
-        ry_vals = np.round(np.arange(0.20, 0.47, 0.04), 3)
+        # Phase 1: 大规模粗扫 (一阶 Bragg 带隙, 1550nm 需要 a~0.4-0.46)
+        # 最小特征=孔直径(2rx)>=200nm 且 孔壁(a-2rx)>=200nm => rx>=0.10, a>=2rx+0.2
+        a_vals = np.round(np.arange(0.40, 0.50, 0.01), 3)
+        rx_vals = np.round(np.arange(0.10, 0.16, 0.01), 3)
+        ry_vals = np.round(np.arange(0.20, 0.47, 0.03), 3)
         N_vals = [12, 16, 20]
 
         params = [
@@ -296,13 +296,13 @@ def main():
             if check_periodic_geometry(a, rx, ry, w_wg=w_wg)[0]
         ]
         print(f"Phase 1: 有效组合 {len(params)} 组 (已过滤 <{min_feature_nm}nm 特征)")
-        print(f"最小特征尺寸限制: {min_feature_nm}nm (rx, ry, 孔间距, 波导剩余宽度)")
+        print(f"最小特征尺寸限制: {min_feature_nm}nm (孔直径, 孔间距, 波导剩余宽度)")
 
     elif args.phase == 2:
-        # Phase 2: 聚焦最佳区域精细扫描
-        a_vals = np.round(np.arange(0.60, 0.72, 0.01), 3)
-        rx_vals = np.round(np.arange(0.20, 0.25, 0.01), 3)
-        ry_vals = np.round(np.arange(0.20, 0.45, 0.02), 3)
+        # Phase 2: 聚焦最佳区域精细扫描 (一阶带隙)
+        a_vals = np.round(np.arange(0.42, 0.48, 0.005), 3)
+        rx_vals = np.round(np.arange(0.10, 0.16, 0.01), 3)
+        ry_vals = np.round(np.arange(0.22, 0.42, 0.02), 3)
         N_vals = [16, 20, 24]
 
         params = [

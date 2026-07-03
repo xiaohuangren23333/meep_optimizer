@@ -211,9 +211,13 @@ def verify_mirror_3d(mirror, nfreq, resolution, fixed_until=80):
 
 
 def coarse_grid(a_end):
-    """Center-period defect depths and taper lengths (mirror-free)."""
-    a_lo = max(min_feature_um + 2 * 0.22, 0.64)  # >= 200nm walls with rx=0.22
-    centers = [round(c, 3) for c in np.arange(0.66, min(a_end, 0.76) + 1e-9, 0.02)]
+    """Center-period defect depths and taper lengths (mirror-free).
+
+    Center period spans ~0.84-0.97 of a_end (shallow to moderate defect).
+    """
+    lo = round(0.84 * a_end, 3)
+    hi = round(0.96 * a_end, 3)
+    centers = [round(c, 3) for c in np.arange(lo, hi + 1e-9, 0.02)]
     tapers = [12, 18, 24]
     return centers, tapers
 
@@ -245,7 +249,7 @@ def main():
             c0 = float(best["a_center"])
             nt0 = int(best["N_taper"])
             cs = [round(c, 3) for c in np.arange(c0 - 0.02, c0 + 0.021, 0.01)
-                  if 0.64 <= c <= a_end]
+                  if 0.30 <= c <= a_end]
             nts = sorted({max(8, nt0 - 6), nt0, nt0 + 6, nt0 + 12})
             grid = [(c, nt) for nt in nts for c in cs]
 

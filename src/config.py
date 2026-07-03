@@ -40,13 +40,21 @@ T_min_target = 0.1
 
 
 def check_hole_geometry(a, rx, ry, w_wg=w_wg, min_um=min_feature_um):
-    """Validate a single elliptical hole against the minimum feature size."""
+    """Validate a single elliptical hole against the minimum feature size.
+
+    The 200 nm minimum feature applies to the smallest fabricable dimension:
+      - hole DIAMETER (2*rx, 2*ry) — a hole of diameter 200 nm is printable
+      - solid wall between adjacent holes (a - 2*rx)
+      - remaining ridge width beside the hole (w_wg - 2*ry)
+    (Previously this incorrectly required the semi-axis >= 200 nm, i.e. a
+    400 nm diameter, which forced the period into the leaky 2nd-order gap.)
+    """
     tol = 1e-6
     violations = []
-    if rx + tol < min_um:
-        violations.append(f"rx={rx*1000:.0f}nm<{min_feature_nm}nm")
-    if ry + tol < min_um:
-        violations.append(f"ry={ry*1000:.0f}nm<{min_feature_nm}nm")
+    if 2 * rx + tol < min_um:
+        violations.append(f"hole_dx={2*rx*1000:.0f}nm<{min_feature_nm}nm")
+    if 2 * ry + tol < min_um:
+        violations.append(f"hole_dy={2*ry*1000:.0f}nm<{min_feature_nm}nm")
     wall_x = a - 2 * rx
     if wall_x + tol < min_um:
         violations.append(f"wall_x={wall_x*1000:.0f}nm<{min_feature_nm}nm")
@@ -93,10 +101,15 @@ def filter_valid_scan_values(values, validator):
 
 
 def max_hole_rx(a, min_um=min_feature_um):
-    """Maximum elliptical x semi-axis for periodic lattice period a."""
+    """Maximum elliptical x semi-axis for periodic lattice period a (wall >= min)."""
     return (a - min_um) / 2.0
 
 
 def max_hole_ry(w_wg=w_wg, min_um=min_feature_um):
-    """Maximum elliptical y semi-axis for ridge width w_wg."""
+    """Maximum elliptical y semi-axis for ridge width w_wg (remaining wall >= min)."""
     return (w_wg - min_um) / 2.0
+
+
+def min_hole_semi_axis(min_um=min_feature_um):
+    """Minimum semi-axis so hole diameter >= minimum feature size."""
+    return min_um / 2.0
